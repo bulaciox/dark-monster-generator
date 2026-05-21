@@ -1,0 +1,11 @@
+[project]
+name = "dark-monster-generator"
+version = "0.1.0"
+description = "App de Streamlit que genera imágenes con fal.ai"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "streamlit",
+    "fal-client",
+    "python-dotenv",
+]
