@@ -8,4 +8,6 @@ dependencies = [
     "streamlit",
     "fal-client",
     "python-dotenv",
+    "supabase>=2.30.0",
+    "httpx>=0.28.1",
 ]

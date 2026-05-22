@@ -47,6 +47,20 @@ def generate_image(prompt: str, model: str = DEFAULT_MODEL) -> str:
     return result["images"][0]["url"]
 
 
+def transcribe_audio(audio_bytes: bytes) -> str:
+    """Transcribe audio bytes to text using fal.ai Whisper.
+
+    Args:
+        audio_bytes: Raw audio data (wav, mp3, webm, etc.).
+
+    Returns:
+        Transcribed text.
+    """
+    audio_url = fal_client.upload(audio_bytes, "audio/wav")
+    result = fal_client.subscribe("fal-ai/whisper", arguments={"audio_url": audio_url})
+    return result["text"].strip()
+
+
 if __name__ == "__main__":
     url = generate_image("a dark monster in a foggy forest")
     print(url)
