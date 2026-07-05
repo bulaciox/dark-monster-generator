@@ -7,7 +7,6 @@ Run with: uv run streamlit run app.py
 
 import observability  # noqa: F401  (must be first: configures Logfire once)
 
-import logfire
 import streamlit as st
 
 from curator import (
@@ -15,33 +14,17 @@ from curator import (
     EMOTION_MAP,
     HAPPENED_EFFECTS,
     IMPORTANCE_MULT,
-    build_edit_instruction,
-    build_full_description,
     genome_summary,
-    new_genome,
-    rephrase_instruction,
-    update_genome,
 )
-from generator import (
-    ContentFlaggedError,
-    edit_image,
-    edit_image_uncensored,
-    generate_image,
-)
+from generator import ContentFlaggedError
+from pipeline import process_submission
 from storage import (
     get_state,
     list_generations,
     list_submissions,
     reset_day,
-    save_generation,
-    save_submission,
     today,
-    upsert_state,
 )
-
-# After this many chained Kontext edits, regenerate from the genome instead of
-# editing again (iterative editing degrades quality after ~5 passes).
-REANCHOR_EVERY = 4
 
 EMOTIONS = list(EMOTION_MAP.keys())
 BODY_PARTS = ["Eyes", "Mouth", "Teeth", "Tongue", "Ears", "Face", "Hair",
@@ -82,90 +65,6 @@ page = st.sidebar.pills("Navigation",
 theme_choice = st.sidebar.pills("Theme", ["Light", "Dark"], default="Light")
 SELECTED_THEME = (theme_choice or "Light").lower()
 st.sidebar.caption("Theme applies when the monster is (re)born.")
-
-
-def process_submission(sub: dict) -> tuple[dict, str]:
-    """Fold a submission into today's monster and return (saved row, kind)."""
-    with logfire.span("process submission", submission=sub) as span:
-        saved, kind = _process_submission(sub)
-        span.set_attribute("kind", kind)
-        span.set_attribute("result_image_url", saved.get("image_url"))
-        return saved, kind
-
-
-def _process_submission(sub: dict) -> tuple[dict, str]:
-    save_submission(sub)
-
-    state = get_state()
-    iteration = (state.get("iteration") or 1) if state else 1
-
-    if state is None or not state.get("image_url"):
-        # First contribution of the day (or after a reset) births the monster.
-        genome = state["genome"] if state and state.get("genome") else new_genome()
-        genome = update_genome(genome, sub)
-        genome["theme"] = SELECTED_THEME
-        description = build_full_description(genome)
-        url = generate_image(description, theme=SELECTED_THEME)
-        saved = save_generation(description, url, day=today(),
-                                version=1, kind="initial", iteration=iteration)
-        upsert_state(genome, saved["image_url"], 1, 0, iteration=iteration)
-        return saved, "initial"
-
-    genome = update_genome(state["genome"], sub)
-    version = state["version"] + 1
-    # Theme the current image actually has; edits must defend that one.
-    current_theme = genome.get("theme", "dark")
-
-    if state["edits_since_anchor"] >= REANCHOR_EVERY:
-        # Re-anchor: fresh generation from the whole genome to undo edit
-        # drift. This is also where a toggled theme takes effect.
-        genome["theme"] = SELECTED_THEME
-        description = build_full_description(genome)
-        url = generate_image(description, theme=SELECTED_THEME)
-        saved = save_generation(description, url, day=today(),
-                                version=version, kind="reanchor",
-                                iteration=iteration)
-        upsert_state(genome, saved["image_url"], version, 0,
-                     iteration=iteration)
-        return saved, "reanchor"
-
-    # The curator SEES the current image, so its instruction only references
-    # anatomy that actually exists.
-    instruction = build_edit_instruction(genome, sub,
-                                         image_url=state["image_url"])
-    url = None
-    try:
-        url = edit_image(state["image_url"], instruction, theme=current_theme)
-    except ContentFlaggedError:
-        # flux-pro's server-side moderation censored the edit (deterministic
-        # false positives on phrasings like "fractures across the neck").
-        # Rescue chain: rephrase + retry pro, then the uncensorable open
-        # model, and only then give up on changing the image.
-        rephrased = rephrase_instruction(instruction)
-        if rephrased:
-            try:
-                url = edit_image(state["image_url"], rephrased,
-                                 theme=current_theme)
-                instruction = rephrased
-            except ContentFlaggedError:
-                pass
-        if url is None:
-            try:
-                url = edit_image_uncensored(state["image_url"], instruction,
-                                            theme=current_theme)
-            except Exception:
-                pass
-    if url is None:
-        # Nothing produced an image. The visitor's contribution still lives
-        # in the genome and will surface in the next re-anchor regeneration.
-        upsert_state(genome, state["image_url"], state["version"],
-                     state["edits_since_anchor"], iteration=iteration)
-        return state, "absorbed"
-    saved = save_generation(instruction, url, day=today(),
-                            version=version, kind="edit", iteration=iteration)
-    upsert_state(genome, saved["image_url"], version,
-                 state["edits_since_anchor"] + 1, iteration=iteration)
-    return saved, "edit"
 
 
 if page == "Contribute":
@@ -275,7 +174,7 @@ if page == "Contribute":
             try:
                 previous = get_state()
                 with st.spinner("The monster is absorbing your answers..."):
-                    saved, kind = process_submission(sub)
+                    saved, kind = process_submission(sub, SELECTED_THEME)
                 if kind == "initial":
                     st.success("Your contribution gave birth to today's monster.")
                     st.image(saved["image_url"])
