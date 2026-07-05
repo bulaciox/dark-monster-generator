@@ -14,9 +14,8 @@ LLM (Claude via fal.ai's OpenRouter router, same FAL_KEY). Every LLM call has
 a deterministic fallback so the installation keeps working if the call fails.
 """
 
-import json
-
 import fal_client
+import logfire
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -313,10 +312,12 @@ at the Golden Days festival in Copenhagen. A single monster evolves all day,
 shaped by visitors' questionnaire answers about what feels monstrous in their
 lives.
 
-The monster's fixed aesthetic (never deviate from it): dark biomechanical
-creature rendered as a medical X-ray / MRI scan; translucent anatomy with
-visible bones and vascular networks; monochrome cold palette, sparse cyan or
-blood-red accents; pure black background; sci-fi medical HUD overlay.
+The monster's fixed aesthetic (never deviate from it): creature rendered as
+an authentic medical X-ray / radiograph; translucent anatomy with visible
+bones and vascular networks; monochrome cold palette, sparse cyan or
+blood-red accents; plain radiographic film background (black film with
+glowing anatomy, or pale film with dark anatomy — follow the current image);
+thin technical annotations like a radiology sheet.
 
 Your visual vocabulary for transformations: enlarge, shrink, multiply,
 conceal, fragment, fuse, hollow out, crack, calcify, wire with cables, wrap
@@ -343,29 +344,36 @@ def _llm(prompt: str, image_url: str | None = None) -> str | None:
     ground its instructions in the anatomy that actually exists. Costs about
     $0.005 extra per call with Claude Sonnet 4.5.
     """
-    try:
-        if image_url:
-            llm_input = [{"role": "user", "content": [
-                {"type": "input_text", "text": prompt},
-                {"type": "input_image", "image_url": image_url},
-            ]}]
-        else:
-            llm_input = prompt
-        result = fal_client.subscribe(
-            LLM_ENDPOINT,
-            arguments={
-                "model": LLM_MODEL,
-                "instructions": CURATOR_SYSTEM,
-                "input": llm_input,
-            },
-        )
-        for item in result.get("output", []):
-            for part in item.get("content", []):
-                text = (part.get("text") or "").strip()
-                if text:
-                    return text
-    except Exception:
-        pass
+    with logfire.span("curator llm call", model=LLM_MODEL,
+                      prompt=prompt, sees_image=bool(image_url),
+                      image_url=image_url) as span:
+        try:
+            if image_url:
+                llm_input = [{"role": "user", "content": [
+                    {"type": "input_text", "text": prompt},
+                    {"type": "input_image", "image_url": image_url},
+                ]}]
+            else:
+                llm_input = prompt
+            result = fal_client.subscribe(
+                LLM_ENDPOINT,
+                arguments={
+                    "model": LLM_MODEL,
+                    "instructions": CURATOR_SYSTEM,
+                    "input": llm_input,
+                },
+            )
+            span.set_attribute("cost_usd",
+                               (result.get("usage") or {}).get("cost"))
+            for item in result.get("output", []):
+                for part in item.get("content", []):
+                    text = (part.get("text") or "").strip()
+                    if text:
+                        span.set_attribute("response", text)
+                        return text
+            span.set_attribute("response", None)
+        except Exception as exc:
+            span.set_attribute("error", str(exc))
     return None
 
 
@@ -446,23 +454,61 @@ def build_edit_instruction(genome: dict, sub: dict,
         "not describe the whole monster, only what changes. Do not mention "
         "the style (it is enforced elsewhere)."
     )
-    instruction = _llm(prompt, image_url=image_url)
-    if instruction:
+    with logfire.span("build edit instruction",
+                      genome_summary=_genome_summary(genome),
+                      submission_signal=_submission_signal(sub)) as span:
+        instruction = _llm(prompt, image_url=image_url)
+        if instruction:
+            span.set_attribute("instruction", instruction)
+            span.set_attribute("used_fallback", False)
+            return instruction
+
+        # Deterministic fallback: strongest region + its dominant effect.
+        parts = []
+        for emotion in sub.get("emotions", [])[:2]:
+            if emotion in EMOTION_MAP:
+                primary, _s, _z, transformation = EMOTION_MAP[emotion]
+                parts.append(f"transform the {primary.lower()}: {transformation}")
+        body_part = sub.get("body_part")
+        happened = HAPPENED_EFFECTS.get(sub.get("body_part_happened", ""))
+        if body_part and happened:
+            parts.append(f"the {body_part.lower()} is now {happened}")
+        if not parts:
+            parts.append("intensify the creature's most prominent feature")
+        instruction = ("Transform the creature: " + "; ".join(parts)
+                       + ". Keep everything else unchanged.")
+        span.set_attribute("instruction", instruction)
+        span.set_attribute("used_fallback", True)
         return instruction
 
-    # Deterministic fallback: strongest region + its dominant effect.
-    parts = []
-    for emotion in sub.get("emotions", [])[:2]:
-        if emotion in EMOTION_MAP:
-            primary, _s, _z, transformation = EMOTION_MAP[emotion]
-            parts.append(f"transform the {primary.lower()}: {transformation}")
-    body_part = sub.get("body_part")
-    happened = HAPPENED_EFFECTS.get(sub.get("body_part_happened", ""))
-    if body_part and happened:
-        parts.append(f"the {body_part.lower()} is now {happened}")
-    if not parts:
-        parts.append("intensify the creature's most prominent feature")
-    return "Transform the creature: " + "; ".join(parts) + ". Keep everything else unchanged."
+
+def rephrase_instruction(instruction: str) -> str | None:
+    """Rewrite an edit instruction that tripped the image model's moderation.
+
+    The classifier fires on phrasings it reads as real-world violence or
+    sexual content (e.g. "fractures across the cervical vertebrae of the
+    neck" reads as neck-breaking), even when the intended edit is innocent.
+    Same transformation, different anatomical framing usually passes.
+    Returns None if the LLM is unavailable (caller then skips to the
+    uncensored fallback model).
+    """
+    prompt = (
+        "The following image-editing instruction was blocked by an automated "
+        "content classifier (a false positive - the edit itself is innocent "
+        "dark-fantasy anatomy):\n\n" + instruction +
+        "\n\nRewrite it to express the SAME visual transformation using "
+        "different, clinically neutral anatomical language. Avoid any phrasing "
+        "that could be read as violence against a person (injuries to the "
+        "neck or throat, strangulation, wounds), sexual content, or "
+        "self-harm; prefer abstract structural terms (fissures in the "
+        "structure, erosion, porous texture, weathering). 1-2 imperative "
+        "sentences."
+    )
+    with logfire.span("rephrase flagged instruction",
+                      original=instruction) as span:
+        rephrased = _llm(prompt)
+        span.set_attribute("rephrased", rephrased)
+        return rephrased
 
 
 def build_full_description(genome: dict) -> str:
@@ -481,24 +527,31 @@ def build_full_description(genome: dict) -> str:
         "Statistically dominant traits must dominate the description. Do not "
         "mention the rendering style, camera or palette."
     )
-    description = _llm(prompt)
-    if description:
-        return description
+    with logfire.span("build full description",
+                      genome_summary=_genome_summary(genome)) as span:
+        description = _llm(prompt)
+        if description:
+            span.set_attribute("description", description)
+            span.set_attribute("used_fallback", False)
+            return description
 
-    # Deterministic fallback assembled from the genome's top entries.
-    pieces = []
-    shape = _top(genome["shape_counts"], 1)
-    size = _top(genome["size_counts"], 1)
-    pieces.append(
-        f"A {size[0][0].lower() if size else 'human-sized'} "
-        f"{shape[0][0].lower() if shape else 'humanoid'} creature")
-    for region, score in _top(genome["region_scores"], 4):
-        effects = genome["region_effects"].get(region, {})
-        effect = _top(effects, 1)[0][0] if effects else "distorted"
-        pieces.append(f"its {region.lower()} showing {effect}")
-    for effect, _count in _top(genome["ability_effects"], 2):
-        pieces.append(effect)
-    return ", ".join(pieces) + "."
+        # Deterministic fallback assembled from the genome's top entries.
+        pieces = []
+        shape = _top(genome["shape_counts"], 1)
+        size = _top(genome["size_counts"], 1)
+        pieces.append(
+            f"A {size[0][0].lower() if size else 'human-sized'} "
+            f"{shape[0][0].lower() if shape else 'humanoid'} creature")
+        for region, score in _top(genome["region_scores"], 4):
+            effects = genome["region_effects"].get(region, {})
+            effect = _top(effects, 1)[0][0] if effects else "distorted"
+            pieces.append(f"its {region.lower()} showing {effect}")
+        for effect, _count in _top(genome["ability_effects"], 2):
+            pieces.append(effect)
+        description = ", ".join(pieces) + "."
+        span.set_attribute("description", description)
+        span.set_attribute("used_fallback", True)
+        return description
 
 
 if __name__ == "__main__":

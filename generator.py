@@ -6,48 +6,100 @@ a .env file).
 """
 
 import fal_client
+import logfire
 from dotenv import load_dotenv
 
 load_dotenv()
 
 DEFAULT_MODEL = "fal-ai/flux/schnell"
 KONTEXT_MODEL = "fal-ai/flux-pro/kontext"
+# Open-weights Kontext: weaker at structural edits than pro, but fal exposes
+# enable_safety_checker=False on it, so it can NEVER censor. Used as the last
+# image-producing fallback when pro's server-side moderation blocks an edit.
+KONTEXT_DEV_MODEL = "fal-ai/flux-kontext/dev"
 
-# Fixed house style: every generation is forced into this dark biomechanical /
-# medical-scan aesthetic regardless of what the user asks for. The user's
-# input only supplies the subject; it is dropped into {subject} below.
-STYLE_TEMPLATE = (
-    "{subject}. "
-    "Dark biomechanical creature design rendered as a medical X-ray / MRI scan, "
-    "translucent skeletal anatomy with visible bones, spine, ribcage and vascular "
-    "networks glowing faintly through semi-transparent flesh, exposed cybernetic "
-    "implants and circuitry fused with organic tissue, bioluminescent nerve "
-    "fibers. "
-    "Monochrome grayscale and cold blue-white palette with sparse cyan or "
-    "blood-red accent highlights, pure black background. "
-    "Overlaid futuristic medical/sci-fi HUD interface: thin scan lines, small "
-    "annotation labels, technical readouts, warning glyphs, crosshairs and "
-    "diagnostic data panels framing the subject like a scanner readout. "
-    "Volumetric light, cinematic film-still concept art, hyper-detailed, "
-    "clinical and unsettling mood, 4k. "
-    "No bright colors, no cartoon style, no daylight, no warm tones."
+# Fixed house style: every generation is forced into a medical-scan aesthetic
+# regardless of what the user asks for. The user's input only supplies the
+# subject; it is dropped into {subject} below. Two palettes ("themes"):
+# - dark:  glowing white-blue anatomy on black radiographic film
+# - light: dense black/charcoal anatomy on pale film, like a printed
+#          coronary angiography sheet on a bright light box
+#
+# Written following FLUX prompting practice: natural language describing one
+# coherent photographic scene (not keyword lists), light described as physical
+# behaviour, explicit full-body framing, and only positive statements (FLUX
+# has no negative prompt). Photographic-film vocabulary keeps the output
+# looking like a real radiograph instead of a 3D render.
+_TEMPLATE_COMMON_HEAD = (
+    "{subject} "
+    "This creature is shown as an authentic full-body medical radiograph: "
+    "the entire creature is visible in the frame from the top of its head to "
+    "the end of its limbs, centered, with empty space around the whole "
+    "silhouette. "
 )
+_TEMPLATE_COMMON_TAIL = (
+    "The mood is clinical and documentary, like a leaked hospital scan of "
+    "something that should not exist."
+)
+
+STYLE_TEMPLATES = {
+    "dark": (
+        _TEMPLATE_COMMON_HEAD +
+        "It looks like a real X-ray film exposure photographed on a clinical "
+        "light box: bones and internal anatomy glow soft white-blue through "
+        "semi-transparent tissue, blood vessels branch through the body like "
+        "a coronary angiography, and the exposure blooms and scatters softly "
+        "where the tissue is dense, with fine analog film grain across the "
+        "whole image. "
+        "The background is deep black radiographic film. Thin technical "
+        "annotations, measurement markers, small data labels and faint "
+        "crosshairs from a radiology workstation frame the figure. "
+        "The palette is cold monochrome grayscale with one faint cyan or "
+        "blood-red accent glowing inside the body. "
+        + _TEMPLATE_COMMON_TAIL
+    ),
+    "light": (
+        _TEMPLATE_COMMON_HEAD +
+        "It looks like a real radiograph print viewed on a bright light box: "
+        "the anatomy renders in dense black and soft charcoal grays against "
+        "a pale gray-white film background, bones dark and sharply defined, "
+        "blood vessels branching through the body as fine black threads like "
+        "a printed coronary angiography, the exposure blooming softly where "
+        "tissue is dense, with fine analog film grain and a subtle paper "
+        "texture across the whole sheet. "
+        "Thin dark technical annotations, measurement markers, small data "
+        "labels and faint crosshairs from a radiology archive sheet frame "
+        "the figure. "
+        "The palette is cold monochrome grayscale with one faint blood-red "
+        "or cyan accent inside the body. "
+        + _TEMPLATE_COMMON_TAIL
+    ),
+}
+
+DEFAULT_THEME = "light"
+
+# Portrait framing fits a full standing figure far better than the default
+# landscape and matches the reference board.
+GENERATE_IMAGE_SIZE = "portrait_4_3"
 
 
 class ContentFlaggedError(Exception):
     """Raised when fal.ai's safety filter flags the generated image."""
 
 
-def generate_image(prompt: str, model: str = DEFAULT_MODEL) -> str:
+def generate_image(prompt: str, model: str = DEFAULT_MODEL,
+                   theme: str = DEFAULT_THEME) -> str:
     """Generate an image from a prompt, forced into the app's house style.
 
     The user-supplied prompt only describes the subject; it is always
-    wrapped in STYLE_TEMPLATE so every generation keeps the same dark
-    biomechanical X-ray / medical-HUD aesthetic.
+    wrapped in the theme's style template so every generation keeps the
+    radiographic aesthetic.
 
     Args:
         prompt: Text description of the subject to generate.
         model: fal.ai model id to use.
+        theme: "dark" (glowing anatomy on black film) or "light" (black
+            anatomy on pale film).
 
     Returns:
         Direct URL to the generated image.
@@ -61,31 +113,43 @@ def generate_image(prompt: str, model: str = DEFAULT_MODEL) -> str:
     if not prompt:
         raise ValueError("The prompt cannot be empty.")
 
-    styled_prompt = STYLE_TEMPLATE.format(subject=prompt)
+    template = STYLE_TEMPLATES.get(theme, STYLE_TEMPLATES[DEFAULT_THEME])
+    styled_prompt = template.format(subject=prompt)
 
     # Safety checker disabled: descriptions distilled from visitors' intimate
     # or traumatic stories trip it with false positives, and a flagged birth
     # or re-anchor would discard their contributions. The fixed clinical
     # X-ray style template keeps outputs non-explicit by construction.
-    result = fal_client.subscribe(
-        model,
-        arguments={"prompt": styled_prompt, "enable_safety_checker": False},
-    )
-
-    if any(result.get("has_nsfw_concepts", [])):
-        raise ContentFlaggedError(
-            "The prompt was flagged by the safety filter, so the image came back "
-            "blank. Try rephrasing it."
+    with logfire.span("generate image", model=model, subject=prompt,
+                      styled_prompt=styled_prompt) as span:
+        result = fal_client.subscribe(
+            model,
+            arguments={"prompt": styled_prompt,
+                       "image_size": GENERATE_IMAGE_SIZE,
+                       "enable_safety_checker": False},
         )
 
-    return result["images"][0]["url"]
+        if any(result.get("has_nsfw_concepts", [])):
+            span.set_attribute("flagged", True)
+            raise ContentFlaggedError(
+                "The prompt was flagged by the safety filter, so the image came back "
+                "blank. Try rephrasing it."
+            )
+
+        image_url = result["images"][0]["url"]
+        span.set_attribute("image_url", image_url)
+        return image_url
 
 
 # Appended to every Kontext edit so chained transformations cannot drift away
 # from the house aesthetic. Kept short on purpose: a long "preserve everything"
 # paragraph competes with the actual instruction for the model's attention and
 # ends up suppressing the requested change (verified empirically).
-EDIT_STYLE_GUARD = "Keep the dark X-ray aesthetic and black background."
+EDIT_STYLE_GUARDS = {
+    "dark": "Keep the dark X-ray aesthetic and black background.",
+    "light": ("Keep the pale radiograph aesthetic: dark anatomy on a "
+              "white-gray film background."),
+}
 
 # fal default is 3.5, which is tuned for subtle photo edits and is too
 # conservative for the visible anatomical mutations this project needs.
@@ -101,7 +165,8 @@ EDIT_SAFETY_TOLERANCE = "6"
 
 
 def edit_image(image_url: str, instruction: str, model: str = KONTEXT_MODEL,
-               guidance_scale: float = EDIT_GUIDANCE_SCALE) -> str:
+               guidance_scale: float = EDIT_GUIDANCE_SCALE,
+               theme: str = DEFAULT_THEME) -> str:
     """Transform an existing image with an editing instruction (FLUX Kontext).
 
     Unlike generate_image, this preserves the creature and only applies the
@@ -113,6 +178,8 @@ def edit_image(image_url: str, instruction: str, model: str = KONTEXT_MODEL,
         model: fal.ai Kontext model id.
         guidance_scale: How strongly to follow the instruction (fal default
             3.5 is too weak for visible mutations; 5.0 works reliably).
+        theme: Palette of the CURRENT image ("dark"/"light"), so the style
+            guard defends the right one.
 
     Returns:
         Direct URL to the edited image.
@@ -125,20 +192,58 @@ def edit_image(image_url: str, instruction: str, model: str = KONTEXT_MODEL,
     if not instruction:
         raise ValueError("The edit instruction cannot be empty.")
 
-    result = fal_client.subscribe(
-        model,
-        arguments={"prompt": f"{instruction} {EDIT_STYLE_GUARD}",
-                   "image_url": image_url,
-                   "guidance_scale": guidance_scale,
-                   "safety_tolerance": EDIT_SAFETY_TOLERANCE},
-    )
-
-    if any(result.get("has_nsfw_concepts", [])):
-        raise ContentFlaggedError(
-            "The edit was flagged by the safety filter. Try rephrasing it."
+    guard = EDIT_STYLE_GUARDS.get(theme, EDIT_STYLE_GUARDS[DEFAULT_THEME])
+    with logfire.span("edit image", model=model, instruction=instruction,
+                      full_prompt=f"{instruction} {guard}",
+                      source_image_url=image_url,
+                      guidance_scale=guidance_scale,
+                      safety_tolerance=EDIT_SAFETY_TOLERANCE) as span:
+        result = fal_client.subscribe(
+            model,
+            arguments={"prompt": f"{instruction} {guard}",
+                       "image_url": image_url,
+                       "guidance_scale": guidance_scale,
+                       "safety_tolerance": EDIT_SAFETY_TOLERANCE},
         )
 
-    return result["images"][0]["url"]
+        if any(result.get("has_nsfw_concepts", [])):
+            span.set_attribute("flagged", True)
+            raise ContentFlaggedError(
+                "The edit was flagged by the safety filter. Try rephrasing it."
+            )
+
+        edited_url = result["images"][0]["url"]
+        span.set_attribute("image_url", edited_url)
+        return edited_url
+
+
+def edit_image_uncensored(image_url: str, instruction: str,
+                          theme: str = DEFAULT_THEME) -> str:
+    """Edit with the open-weights Kontext dev model, safety checker OFF.
+
+    Fallback for when flux-pro/kontext's server-side moderation censors an
+    edit (it returns a black image). Dev applies structural changes more
+    weakly than pro, but it always returns a real image, so a visitor's
+    contribution is never silently discarded.
+    """
+    instruction = instruction.strip()
+    if not instruction:
+        raise ValueError("The edit instruction cannot be empty.")
+
+    guard = EDIT_STYLE_GUARDS.get(theme, EDIT_STYLE_GUARDS[DEFAULT_THEME])
+    with logfire.span("edit image (uncensored dev fallback)",
+                      model=KONTEXT_DEV_MODEL, instruction=instruction,
+                      source_image_url=image_url) as span:
+        result = fal_client.subscribe(
+            KONTEXT_DEV_MODEL,
+            arguments={"prompt": f"{instruction} {guard}",
+                       "image_url": image_url,
+                       "guidance_scale": EDIT_GUIDANCE_SCALE,
+                       "enable_safety_checker": False},
+        )
+        edited_url = result["images"][0]["url"]
+        span.set_attribute("image_url", edited_url)
+        return edited_url
 
 
 def transcribe_audio(audio_bytes: bytes) -> str:

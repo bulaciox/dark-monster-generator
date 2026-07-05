@@ -66,6 +66,26 @@ cp .env.example .env
 #   SUPABASE_KEY   -> Supabase > Project Settings > API Keys (service_role)
 ```
 
+### Observabilidad (Logfire)
+
+Cada submission genera una traza en
+[Logfire](https://logfire-eu.pydantic.dev/bulacio/dark-monster-generator)
+(`process submission` → `build edit instruction` / `build full description` →
+`curator llm call` → `edit image` / `generate image`), con el input del
+visitante, los prompts generados, el coste del LLM y las URLs de imagen.
+
+Credenciales (una de las dos):
+
+```bash
+# desarrollo local (OAuth del CLI, una sola vez):
+uv run logfire --base-url='https://logfire-eu.pydantic.dev' auth
+uv run logfire --base-url='https://logfire-eu.pydantic.dev' projects use --org 'bulacio' 'dark-monster-generator'
+
+# o en despliegues: añade LOGFIRE_TOKEN a .env (write token del proyecto)
+```
+
+Sin credenciales la app funciona igual; simplemente no envía telemetría.
+
 ### Configurar Supabase (pasos manuales, una sola vez)
 
 1. **Crear las tablas**: abre *Supabase > SQL Editor* y ejecuta el contenido
