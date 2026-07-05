@@ -54,9 +54,15 @@ def save_generation(prompt: str, source_url: str, **extra) -> dict:
     """Download a fal.ai temporary image, upload it to Storage and record it.
 
     Extra keyword args (day, version, kind) are stored on the generations row.
+    PNG is preserved as PNG: re-saving each edit cycle as JPEG compounds
+    compression artifacts visibly after a few passes.
     """
-    image_bytes = httpx.get(source_url, follow_redirects=True).content
-    image_url = _upload_to_bucket(image_bytes, "image/jpeg")
+    response = httpx.get(source_url, follow_redirects=True)
+    content_type = response.headers.get("content-type", "")
+    if not content_type.startswith("image/"):
+        content_type = ("image/png" if source_url.split("?")[0].endswith(".png")
+                        else "image/jpeg")
+    image_url = _upload_to_bucket(response.content, content_type)
     return _insert_row(prompt, image_url, **extra)
 
 

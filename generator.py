@@ -17,6 +17,14 @@ KONTEXT_MODEL = "fal-ai/flux-pro/kontext"
 # enable_safety_checker=False on it, so it can NEVER censor. Used as the last
 # image-producing fallback when pro's server-side moderation blocks an edit.
 KONTEXT_DEV_MODEL = "fal-ai/flux-kontext/dev"
+# img2img at 40 steps: used for re-anchors, regenerating fine detail while
+# preserving the creature's composition and identity (unlike a text-only
+# regeneration, which invents a new creature every time).
+REFRESH_MODEL = "fal-ai/flux/dev/image-to-image"
+
+# All generation goes through PNG: each edit cycle re-saves the image, and
+# JPEG recompression artifacts compound visibly after a few passes.
+OUTPUT_FORMAT = "png"
 
 # Fixed house style: every generation is forced into a medical-scan aesthetic
 # regardless of what the user asks for. The user's input only supplies the
@@ -126,6 +134,7 @@ def generate_image(prompt: str, model: str = DEFAULT_MODEL,
             model,
             arguments={"prompt": styled_prompt,
                        "image_size": GENERATE_IMAGE_SIZE,
+                       "output_format": OUTPUT_FORMAT,
                        "enable_safety_checker": False},
         )
 
@@ -146,9 +155,11 @@ def generate_image(prompt: str, model: str = DEFAULT_MODEL,
 # paragraph competes with the actual instruction for the model's attention and
 # ends up suppressing the requested change (verified empirically).
 EDIT_STYLE_GUARDS = {
-    "dark": "Keep the dark X-ray aesthetic and black background.",
-    "light": ("Keep the pale radiograph aesthetic: dark anatomy on a "
-              "white-gray film background."),
+    "dark": ("Keep the dark X-ray film aesthetic: matte analog film grain, "
+             "glowing anatomy on a black film background, never glossy 3D."),
+    "light": ("Keep the pale radiograph film aesthetic: matte analog film "
+              "grain, dark anatomy on a white-gray film background, never "
+              "glossy 3D."),
 }
 
 # fal default is 3.5, which is tuned for subtle photo edits and is too
@@ -203,6 +214,7 @@ def edit_image(image_url: str, instruction: str, model: str = KONTEXT_MODEL,
             arguments={"prompt": f"{instruction} {guard}",
                        "image_url": image_url,
                        "guidance_scale": guidance_scale,
+                       "output_format": OUTPUT_FORMAT,
                        "safety_tolerance": EDIT_SAFETY_TOLERANCE},
         )
 
@@ -239,11 +251,63 @@ def edit_image_uncensored(image_url: str, instruction: str,
             arguments={"prompt": f"{instruction} {guard}",
                        "image_url": image_url,
                        "guidance_scale": EDIT_GUIDANCE_SCALE,
+                       "output_format": OUTPUT_FORMAT,
                        "enable_safety_checker": False},
         )
         edited_url = result["images"][0]["url"]
         span.set_attribute("image_url", edited_url)
         return edited_url
+
+
+# Fraction of the denoising schedule applied in a refresh: high enough to
+# regenerate crisp fine detail, low enough to preserve the creature's
+# composition and identity. Calibrated empirically on degraded edits:
+# 0.4 barely repaints, 0.55-0.7 restores detail keeping identity, 0.85
+# already changes palette and materials.
+REFRESH_STRENGTH = 0.6
+
+
+def refresh_image(image_url: str, description: str,
+                  theme: str = DEFAULT_THEME,
+                  strength: float = REFRESH_STRENGTH) -> str:
+    """Re-anchor: regenerate the CURRENT image with fresh detail (img2img).
+
+    Chained Kontext edits progressively lose sharpness (high-frequency
+    detail loss + reprocessing artifacts). This runs the current image
+    through flux/dev image-to-image at 40 steps with the genome description:
+    the composition and identity survive, the fine detail is repainted
+    cleanly. Much better than the old text-only re-anchor, which invented a
+    brand-new creature every time.
+
+    Args:
+        image_url: Public URL of the current (degraded) image.
+        description: Full creature description from the genome.
+        theme: Palette theme, applied via the style template.
+        strength: 0-1; how much of the image is re-diffused. Lower keeps
+            more of the original, higher repaints more aggressively.
+
+    Returns:
+        Direct URL to the refreshed image.
+    """
+    template = STYLE_TEMPLATES.get(theme, STYLE_TEMPLATES[DEFAULT_THEME])
+    styled_prompt = template.format(subject=description.strip())
+
+    with logfire.span("refresh image (img2img reanchor)", model=REFRESH_MODEL,
+                      description=description, strength=strength,
+                      source_image_url=image_url) as span:
+        result = fal_client.subscribe(
+            REFRESH_MODEL,
+            arguments={"prompt": styled_prompt,
+                       "image_url": image_url,
+                       "strength": strength,
+                       "image_size": GENERATE_IMAGE_SIZE,
+                       "num_inference_steps": 40,
+                       "output_format": OUTPUT_FORMAT,
+                       "enable_safety_checker": False},
+        )
+        refreshed_url = result["images"][0]["url"]
+        span.set_attribute("image_url", refreshed_url)
+        return refreshed_url
 
 
 def transcribe_audio(audio_bytes: bytes) -> str:

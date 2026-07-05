@@ -19,6 +19,7 @@ from generator import (
     edit_image,
     edit_image_uncensored,
     generate_image,
+    refresh_image,
 )
 from storage import (
     get_state,
@@ -28,9 +29,10 @@ from storage import (
     upsert_state,
 )
 
-# After this many chained Kontext edits, regenerate from the genome instead of
-# editing again (iterative editing degrades quality after ~5 passes).
-REANCHOR_EVERY = 4
+# After this many chained Kontext edits, refresh the image (img2img reanchor)
+# to undo the sharpness loss of iterative editing. Refreshes preserve the
+# creature's identity, so they can be frequent.
+REANCHOR_EVERY = 3
 
 
 def process_submission(sub: dict, theme: str = DEFAULT_THEME) -> tuple[dict, str]:
@@ -70,11 +72,13 @@ def _process_submission(sub: dict, theme: str) -> tuple[dict, str]:
     current_theme = genome.get("theme", "dark")
 
     if state["edits_since_anchor"] >= REANCHOR_EVERY:
-        # Re-anchor: fresh generation from the whole genome to undo edit
-        # drift. This is also where a toggled theme takes effect.
-        genome["theme"] = theme
+        # Re-anchor: img2img refresh of the CURRENT image with the genome
+        # description. Repaints fine detail (undoing edit drift) while
+        # keeping the creature recognisable. The image keeps its own theme;
+        # a toggled theme only applies at the next true rebirth.
         description = build_full_description(genome)
-        url = generate_image(description, theme=theme)
+        url = refresh_image(state["image_url"], description,
+                            theme=current_theme)
         saved = save_generation(description, url, day=today(),
                                 version=version, kind="reanchor",
                                 iteration=iteration)
