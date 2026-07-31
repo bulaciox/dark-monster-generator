@@ -14,6 +14,8 @@ LLM (Claude via fal.ai's OpenRouter router, same FAL_KEY). Every LLM call has
 a deterministic fallback so the installation keeps working if the call fails.
 """
 
+import json
+
 import fal_client
 import logfire
 from dotenv import load_dotenv
@@ -491,6 +493,106 @@ def build_edit_instruction(genome: dict, sub: dict,
         return instruction
 
 
+def build_edit_plan(genome: dict, sub: dict,
+                    image_url: str | None = None) -> dict:
+    """Classified edit plan for the hybrid pipeline.
+
+    Returns {"type": "local"|"structural", "region": str, "instruction": str}.
+
+    - "local": the change transforms ONE existing visible region -> the
+      pipeline segments that region (EVF-SAM) and repaints only it (FLUX
+      Fill). `region` is a literal visual phrase for the segmenter;
+      `instruction` describes what the region BECOMES.
+    - "structural": the change adds new structures or affects the whole
+      body -> the pipeline uses the Kontext edit chain. `instruction` is an
+      imperative edit command.
+
+    Falls back to a structural plan via build_edit_instruction if the LLM
+    is unavailable or returns unparseable output.
+    """
+    seeing = (
+        "The attached image is the monster AS IT EXISTS RIGHT NOW. Ground "
+        "your plan in it: only reference features that are actually visible. "
+        if image_url else
+        "You cannot see the current image, so use generic anatomical terms. "
+    )
+    prompt = (
+        "CURRENT COLLECTIVE GENOME:\n" + _genome_summary(genome) +
+        "\n\nTHIS VISITOR'S SIGNAL (already translated into the project's "
+        "visual vocabulary):\n" + _submission_signal(sub) +
+        "\n\n" + seeing +
+        "Decide how the monster absorbs this signal and answer with ONLY a "
+        "JSON object, no code fences:\n"
+        '{"type": "local" or "structural", "region": "...", '
+        '"instruction": "..."}\n\n'
+        "Use type \"local\" when the change transforms ONE existing, "
+        "clearly visible body region (the common case). Then \"region\" is "
+        "a short literal phrase naming that visible region for an image "
+        "segmenter (e.g. \"the skull\", \"the ribcage\", \"both hands\") — "
+        "it must be ONE compact feature, never the whole body, torso or "
+        "figure. \"instruction\" is a self-contained description of what "
+        "that region now looks like after absorbing the signal (it will be "
+        "REPAINTED from your description). Describe only what IS VISIBLE "
+        "after the change: image models cannot paint absence, so never "
+        "phrase it as something missing or gone and never name the absent "
+        "thing (e.g. for a missing heart, describe 'an empty black cavity "
+        "between the ribs, edges cracked inward' — do not mention a heart). "
+        "Make the transformation CLEARLY VISIBLE AT A GLANCE, and when it "
+        "fits the emotion ignite it with one saturated accent (blood-red or "
+        "electric cyan) against the monochrome radiograph.\n"
+        "Use type \"structural\" only when the change must add NEW "
+        "structures outside the existing silhouette (sprouting limbs, "
+        "growths) or alter the whole body at once. Then \"region\" is an "
+        "empty string and \"instruction\" is an imperative editing command "
+        "(1-2 sentences).\n"
+        "In both cases: one bold change, keep the creature's silhouette, "
+        "pose and species recognisable, never a redesign, never a literal "
+        "depiction of one visitor's words. Do not mention the rendering "
+        "style."
+    )
+    with logfire.span("build edit plan",
+                      genome_summary=_genome_summary(genome),
+                      submission_signal=_submission_signal(sub)) as span:
+        raw = _llm(prompt, image_url=image_url)
+        plan = _parse_plan(raw)
+        if plan:
+            span.set_attribute("plan", plan)
+            span.set_attribute("used_fallback", False)
+            return plan
+        # LLM missing or malformed answer: fall back to the classic
+        # structural instruction (deterministic path included).
+        instruction = build_edit_instruction(genome, sub, image_url=image_url)
+        plan = {"type": "structural", "region": "", "instruction": instruction}
+        span.set_attribute("plan", plan)
+        span.set_attribute("used_fallback", True)
+        return plan
+
+
+def _parse_plan(raw: str | None) -> dict | None:
+    if not raw:
+        return None
+    text = raw.strip()
+    if text.startswith("```"):
+        text = text.strip("`")
+        text = text[text.find("{"):]
+    start, end = text.find("{"), text.rfind("}")
+    if start == -1 or end == -1:
+        return None
+    try:
+        plan = json.loads(text[start:end + 1])
+    except json.JSONDecodeError:
+        return None
+    if plan.get("type") not in ("local", "structural"):
+        return None
+    if not (plan.get("instruction") or "").strip():
+        return None
+    if plan["type"] == "local" and not (plan.get("region") or "").strip():
+        return None
+    return {"type": plan["type"],
+            "region": (plan.get("region") or "").strip(),
+            "instruction": plan["instruction"].strip()}
+
+
 def rephrase_instruction(instruction: str) -> str | None:
     """Rewrite an edit instruction that tripped the image model's moderation.
 
@@ -532,9 +634,12 @@ def build_full_description(genome: dict) -> str:
         "\n\nWrite a single-paragraph physical description (60-100 words, "
         "English) of the collective monster as it exists right now, for an AI "
         "image generator. Describe body shape, the anatomical regions the "
-        "genome marks as most charged and their transformations, and posture. "
-        "Statistically dominant traits must dominate the description. Do not "
-        "mention the rendering style, camera or palette."
+        "genome marks as most charged and their transformations, and posture "
+        "(always fully extended and stretched out like a specimen on an "
+        "X-ray table, never crouched or seated). The creature need not be "
+        "humanoid: bone, organs, membranes, tendrils and stranger structures "
+        "may coexist. Statistically dominant traits must dominate the "
+        "description. Do not mention the rendering style, camera or palette."
     )
     with logfire.span("build full description",
                       genome_summary=_genome_summary(genome)) as span:

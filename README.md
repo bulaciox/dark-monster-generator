@@ -20,16 +20,24 @@ curator.update_genome()      ← tablas emoción→anatomía (Rika) y
    en el GENOMA del día         con pesos por parte del cuerpo
         │
         ▼
-¿Primera del día? ──sí──► generate_image(descripción completa)   [initial]
+¿Primera del día / tras reset? ──sí──► generate_image(descr.)     [initial]
         │no
-¿4+ ediciones desde el último anclaje?
-        │                 ──sí──► generate_image(descr. completa) [reanchor]
-        │no                       (la edición iterativa degrada ~5 pasadas)
+¿3+ ediciones Kontext desde el anclaje?
+        │        ──sí──► refresh_image(): img2img de la imagen    [reanchor]
+        │no              actual (repinta detalle, conserva identidad)
         ▼
-curator.build_edit_instruction()  → LLM traduce la submission a UNA
-        │                           instrucción de cambio anatómico
-        ▼
-generator.edit_image()  → FLUX Kontext transforma la imagen actual  [edit]
+curator.build_edit_plan()  → el LLM VE la imagen y clasifica:
+        │
+        ├─ "local" ──► segment_region (EVF-SAM, máscara por texto,
+        │              cobertura 0.5%-30%) → fill_region (FLUX Fill:
+        │              repinta SOLO la zona; el resto queda           [edit]
+        │              píxel-idéntico, cero drift)
+        │                │ (si falla, cae a ↓)
+        └─ "structural" ► edit_image (Kontext pro) con rescate
+                          anti-censura (reformular → Kontext dev
+                          sin filtro) + match_palette (anti deriva    [edit]
+                          cromática; solo los Kontext cuentan
+                          para el re-anclaje)
         │
         ▼
 Supabase: genoma actualizado (monster_state) + versión guardada (generations)

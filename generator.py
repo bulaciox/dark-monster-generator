@@ -21,6 +21,11 @@ KONTEXT_DEV_MODEL = "fal-ai/flux-kontext/dev"
 # preserving the creature's composition and identity (unlike a text-only
 # regeneration, which invents a new creature every time).
 REFRESH_MODEL = "fal-ai/flux/dev/image-to-image"
+# Text-prompted segmentation + masked inpainting: the surgical edit path.
+# Pixels outside the mask are never touched, so local edits cause zero
+# style drift and zero quality loss.
+SEGMENT_MODEL = "fal-ai/evf-sam"
+FILL_MODEL = "fal-ai/flux-pro/v1/fill"
 
 # All generation goes through PNG: each edit cycle re-saves the image, and
 # JPEG recompression artifacts compound visibly after a few passes.
@@ -41,9 +46,13 @@ OUTPUT_FORMAT = "png"
 _TEMPLATE_COMMON_HEAD = (
     "{subject} "
     "This creature is shown as an authentic full-body medical radiograph: "
-    "the entire creature is visible in the frame from the top of its head to "
-    "the end of its limbs, centered, with empty space around the whole "
+    "its body fully extended and stretched out like a specimen positioned "
+    "for an X-ray exposure, limbs elongated, never crouched or seated, the "
+    "entire creature visible in the frame with empty space around the whole "
     "silhouette. "
+    "Its anatomy is not necessarily human: bone, soft tissue, organs, "
+    "membranes, tendrils and stranger structures may coexist, every layer "
+    "revealed as translucent radiographic exposure. "
 )
 _TEMPLATE_COMMON_TAIL = (
     "The mood is clinical and documentary, like a leaked hospital scan of "
@@ -308,6 +317,139 @@ def refresh_image(image_url: str, description: str,
         refreshed_url = result["images"][0]["url"]
         span.set_attribute("image_url", refreshed_url)
         return refreshed_url
+
+
+def segment_region(image_url: str, region_phrase: str) -> str:
+    """Text-prompted segmentation: returns the mask URL for a body region.
+
+    The mask is dilated (room for the transformation to breathe) and
+    blurred (soft blending at the seams). Raises ValueError if the region
+    covers almost nothing (not found) or most of the image (too broad for
+    a local edit — the caller should fall back to a global Kontext edit).
+    """
+    with logfire.span("segment region", model=SEGMENT_MODEL,
+                      region=region_phrase,
+                      source_image_url=image_url) as span:
+        result = fal_client.subscribe(SEGMENT_MODEL, arguments={
+            "prompt": region_phrase,
+            "image_url": image_url,
+            "mask_only": True,
+            "expand_mask": 20,
+            "blur_mask": 8,
+        })
+        mask_url = result["image"]["url"]
+        coverage = _mask_coverage(mask_url)
+        span.set_attribute("mask_url", mask_url)
+        span.set_attribute("coverage", round(coverage, 4))
+        if coverage < 0.005:
+            raise ValueError(
+                f"Region '{region_phrase}' not found in the image "
+                f"(mask covers {coverage:.1%}).")
+        if coverage > 0.30:
+            # A "local" region that swallows a third of the frame means the
+            # segmenter grabbed the whole creature (e.g. "the jaw" matching
+            # the full body) — repainting it would destroy the monster.
+            # Reject so the pipeline falls back to a Kontext edit.
+            raise ValueError(
+                f"Region '{region_phrase}' covers {coverage:.0%} of the "
+                "image; too broad for a local edit.")
+        return mask_url
+
+
+def _mask_coverage(mask_url: str) -> float:
+    """Fraction of the mask that is selected (white)."""
+    import io
+
+    import httpx
+    from PIL import Image
+
+    data = httpx.get(mask_url, follow_redirects=True).content
+    mask = Image.open(io.BytesIO(data)).convert("L")
+    histogram = mask.histogram()
+    selected = sum(histogram[128:])
+    total = sum(histogram)
+    return selected / total if total else 0.0
+
+
+def fill_region(image_url: str, mask_url: str, region_prompt: str,
+                theme: str = DEFAULT_THEME) -> str:
+    """Repaint ONLY the masked region (FLUX Fill inpainting).
+
+    Unlike Kontext, pixels outside the mask are untouched: no style drift,
+    no quality loss, and the change inside the mask is guaranteed visible.
+    The prompt should describe what the region BECOMES (painted content),
+    not an editing instruction.
+    """
+    guard = EDIT_STYLE_GUARDS.get(theme, EDIT_STYLE_GUARDS[DEFAULT_THEME])
+    with logfire.span("fill region", model=FILL_MODEL,
+                      region_prompt=region_prompt, mask_url=mask_url,
+                      source_image_url=image_url) as span:
+        result = fal_client.subscribe(FILL_MODEL, arguments={
+            "image_url": image_url,
+            "mask_url": mask_url,
+            "prompt": f"{region_prompt} {guard}",
+            "output_format": OUTPUT_FORMAT,
+            "safety_tolerance": EDIT_SAFETY_TOLERANCE,
+        })
+        if any(result.get("has_nsfw_concepts", [])):
+            span.set_attribute("flagged", True)
+            raise ContentFlaggedError(
+                "The fill was flagged by the safety filter.")
+        filled_url = result["images"][0]["url"]
+        span.set_attribute("image_url", filled_url)
+        return filled_url
+
+
+# Blend factor for palette normalization: 1.0 would clamp the edit's colors
+# fully back to the pre-edit image (killing intentional accents); 0 disables.
+PALETTE_MATCH_BLEND = 0.5
+
+
+def match_palette(edited_url: str, reference_url: str,
+                  blend: float = PALETTE_MATCH_BLEND) -> str:
+    """Pull an edited image's global color statistics toward the reference.
+
+    Kontext repaints the whole frame, so each edit drifts the global palette
+    a little (accumulating into e.g. a fully rust-colored creature). This
+    shifts each RGB channel's mean partially back toward the pre-edit image
+    (mean-shift only: std scaling explodes on near-uniform backgrounds, and
+    LAB via PIL's ImageCms proved unreliable). Runs locally (PIL + numpy,
+    no API cost); on any failure the edit is returned untouched — color
+    normalization must never break the pipeline.
+
+    Returns a URL (fal storage) of the normalized PNG, or edited_url as-is.
+    """
+    with logfire.span("match palette", edited_url=edited_url,
+                      reference_url=reference_url, blend=blend) as span:
+        try:
+            import io
+
+            import httpx
+            import numpy as np
+            from PIL import Image
+
+            def _load(url: str):
+                data = httpx.get(url, follow_redirects=True).content
+                image = Image.open(io.BytesIO(data)).convert("RGB")
+                return np.asarray(image, dtype=np.float64)
+
+            e, r = _load(edited_url), _load(reference_url)
+
+            deltas = r.mean(axis=(0, 1)) - e.mean(axis=(0, 1))
+            span.set_attribute("channel_deltas",
+                               [round(d, 1) for d in deltas])
+            e += blend * deltas
+
+            normalized = Image.fromarray(
+                np.clip(e, 0, 255).astype("uint8"), mode="RGB")
+            buffer = io.BytesIO()
+            normalized.save(buffer, format="PNG")
+            url = fal_client.upload(buffer.getvalue(), "image/png")
+            span.set_attribute("image_url", url)
+            return url
+        except Exception as exc:
+            span.set_attribute("error", str(exc))
+            return edited_url
 
 
 def transcribe_audio(audio_bytes: bytes) -> str:
