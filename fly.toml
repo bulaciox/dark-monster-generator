@@ -1,0 +1,32 @@
+app = "street-monster"
+# Stockholm: closest region to Copenhagen, where the installation runs.
+primary_region = "arn"
+
+[build]
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # A birth takes ~30s, so never interrupt a machine mid-request.
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+  [http_service.concurrency]
+    type = "requests"
+    # Submissions are processed one at a time per machine, which also keeps
+    # two simultaneous visitors from editing the same image.
+    hard_limit = 1
+    soft_limit = 1
+
+[[http_service.checks]]
+  grace_period = "20s"
+  interval = "30s"
+  method = "GET"
+  timeout = "5s"
+  path = "/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"

@@ -17,6 +17,7 @@ from generator import (
     DEFAULT_THEME,
     ContentFlaggedError,
     edit_image,
+    edit_image_kontext,
     edit_image_uncensored,
     fill_region,
     generate_image,
@@ -72,7 +73,7 @@ def _process_submission(sub: dict, theme: str) -> tuple[dict, str]:
     genome = update_genome(state["genome"], sub)
     version = state["version"] + 1
     # Theme the current image actually has; edits must defend that one.
-    current_theme = genome.get("theme", "dark")
+    current_theme = genome.get("theme", DEFAULT_THEME)
 
     if state["edits_since_anchor"] >= REANCHOR_EVERY:
         # Re-anchor: img2img refresh of the CURRENT image with the genome
@@ -98,7 +99,17 @@ def _process_submission(sub: dict, theme: str) -> tuple[dict, str]:
     url = None
     edit_path = None
 
-    if plan["type"] == "local":
+    # Primary path: Qwen Image Edit 2511. Fast (~5s), no prompt-level
+    # censorship, and it preserves everything it was not asked to change,
+    # so it needs neither masks nor palette correction.
+    try:
+        url = edit_image(state["image_url"], instruction, theme=current_theme)
+        edit_path = "qwen"
+    except Exception:
+        url = None
+
+    if url is None and plan["type"] == "local":
+        # Fallback A: surgical inpainting inside a segmented mask.
         try:
             mask_url = segment_region(state["image_url"], plan["region"])
             url = fill_region(state["image_url"], mask_url, instruction,
@@ -106,23 +117,21 @@ def _process_submission(sub: dict, theme: str) -> tuple[dict, str]:
             edit_path = "fill"
             instruction = f"[{plan['region']}] {instruction}"
         except Exception:
-            # Region not found / too broad / fill flagged: fall through to
-            # the Kontext chain with the same instruction.
             url = None
 
     if url is None:
-        # Structural plan, or the local path failed. Kontext chain with the
-        # censorship rescue: pro -> rephrase + retry pro -> uncensorable dev.
+        # Fallback B: Kontext chain with the censorship rescue
+        # (pro -> rephrase + retry pro -> uncensorable dev).
         try:
-            url = edit_image(state["image_url"], instruction,
-                             theme=current_theme)
+            url = edit_image_kontext(state["image_url"], instruction,
+                                     theme=current_theme)
             edit_path = "kontext"
         except ContentFlaggedError:
             rephrased = rephrase_instruction(instruction)
             if rephrased:
                 try:
-                    url = edit_image(state["image_url"], rephrased,
-                                     theme=current_theme)
+                    url = edit_image_kontext(state["image_url"], rephrased,
+                                             theme=current_theme)
                     instruction = rephrased
                     edit_path = "kontext"
                 except ContentFlaggedError:
