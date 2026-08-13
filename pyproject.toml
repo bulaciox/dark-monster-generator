@@ -5,10 +5,11 @@ description = "App de Streamlit que genera imágenes con fal.ai"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "streamlit",
     "fal-client",
     "python-dotenv",
     "supabase>=2.30.0",
     "httpx>=0.28.1",
     "logfire>=4.37.0",
+    "fastapi>=0.141.1",
+    "uvicorn>=0.47.0",
 ]

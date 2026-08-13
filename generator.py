@@ -11,6 +11,17 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Krea 2 Large: foundation model built for aesthetic direction. Generates the
+# monster at birth and at re-anchors, and accepts up to 10 style reference
+# images (image_style_references) to lock the project's look.
+KREA_MODEL = "krea/v2/large/text-to-image"
+# Qwen Image Edit 2511 (Apache 2.0): the community's editing workhorse. ~5s,
+# no prompt-level censorship, supports negative_prompt, and its headline
+# improvement is mitigating drift across chained edits — exactly this
+# project's core problem.
+QWEN_EDIT_MODEL = "fal-ai/qwen-image-edit-2511"
+
+# Legacy engines, kept as fallbacks (see pipeline.py).
 DEFAULT_MODEL = "fal-ai/flux/schnell"
 KONTEXT_MODEL = "fal-ai/flux-pro/kontext"
 # Open-weights Kontext: weaker at structural edits than pro, but fal exposes
@@ -21,6 +32,11 @@ KONTEXT_DEV_MODEL = "fal-ai/flux-kontext/dev"
 # preserving the creature's composition and identity (unlike a text-only
 # regeneration, which invents a new creature every time).
 REFRESH_MODEL = "fal-ai/flux/dev/image-to-image"
+# Text-prompted segmentation + masked inpainting: the surgical edit path.
+# Pixels outside the mask are never touched, so local edits cause zero
+# style drift and zero quality loss.
+SEGMENT_MODEL = "fal-ai/evf-sam"
+FILL_MODEL = "fal-ai/flux-pro/v1/fill"
 
 # All generation goes through PNG: each edit cycle re-saves the image, and
 # JPEG recompression artifacts compound visibly after a few passes.
@@ -38,84 +54,119 @@ OUTPUT_FORMAT = "png"
 # behaviour, explicit full-body framing, and only positive statements (FLUX
 # has no negative prompt). Photographic-film vocabulary keeps the output
 # looking like a real radiograph instead of a 3D render.
-_TEMPLATE_COMMON_HEAD = (
-    "{subject} "
-    "This creature is shown as an authentic full-body medical radiograph: "
-    "the entire creature is visible in the frame from the top of its head to "
-    "the end of its limbs, centered, with empty space around the whole "
-    "silhouette. "
-)
-_TEMPLATE_COMMON_TAIL = (
-    "The mood is clinical and documentary, like a leaked hospital scan of "
-    "something that should not exist."
-)
-
 STYLE_TEMPLATES = {
-    "dark": (
-        _TEMPLATE_COMMON_HEAD +
-        "It looks like a real X-ray film exposure photographed on a clinical "
-        "light box: bones and internal anatomy glow soft white-blue through "
-        "semi-transparent tissue, blood vessels branch through the body like "
-        "a coronary angiography, and the exposure blooms and scatters softly "
-        "where the tissue is dense, with fine analog film grain across the "
-        "whole image. "
-        "The background is deep black radiographic film. Thin technical "
-        "annotations, measurement markers, small data labels and faint "
-        "crosshairs from a radiology workstation frame the figure. "
-        "The palette is cold monochrome grayscale with one faint cyan or "
-        "blood-red accent glowing inside the body. "
-        + _TEMPLATE_COMMON_TAIL
+    # The house style: the collective monster is the PATIENT on the table and
+    # the visitors' contributions are the surgery being performed on it.
+    "surgical": (
+        "Wide analog film photograph of a surgical operation, camera set well "
+        "back from the table so the whole scene is visible: the entire "
+        "operating table, the patient's body from head to knees, and the "
+        "surgeons standing around it. "
+        "The patient lies on their back on the table, face clearly visible, "
+        "wearing a clear plastic oxygen mask with a white reservoir bag. "
+        "The patient is a human being, unremarkable at first glance — someone "
+        "you could pass in the street: {subject} "
+        "Surgeons in white gloves work with small steel instruments over an "
+        "exposed area of the body, surrounded by surgical drapes; their hands "
+        "are part of the wider scene, not close to the camera. "
+        "Direct overhead surgical spotlights create deep, dramatic shadows. "
+        "Highly saturated 1970s Fuji film colour profile. The green and "
+        "turquoise surgical scrubs and drapes are exceptionally deep and "
+        "intensely vibrant. Rich, warm brown tones are present in the shadows "
+        "and skin tones. Visible film grain, retro cinematic aesthetic, "
+        "documentary photograph of a real operating theatre."
     ),
-    "light": (
-        _TEMPLATE_COMMON_HEAD +
+    # Previous aesthetic, kept selectable: pale radiograph plate.
+    "radiograph": (
+        "{subject} "
+        "This creature is shown as an authentic full-body medical radiograph: "
+        "its body fully extended and stretched out like a specimen positioned "
+        "for an X-ray exposure, limbs elongated, never crouched or seated, the "
+        "entire creature visible in the frame with empty space around the "
+        "whole silhouette. Its anatomy is not necessarily human: bone, soft "
+        "tissue, organs, membranes, tendrils and stranger structures may "
+        "coexist, every layer revealed as translucent radiographic exposure. "
         "It looks like a real radiograph print viewed on a bright light box: "
-        "the anatomy renders in dense black and soft charcoal grays against "
-        "a pale gray-white film background, bones dark and sharply defined, "
-        "blood vessels branching through the body as fine black threads like "
-        "a printed coronary angiography, the exposure blooming softly where "
+        "the anatomy renders in dense black and soft charcoal grays against a "
+        "pale gray-white film background, the exposure blooming softly where "
         "tissue is dense, with fine analog film grain and a subtle paper "
-        "texture across the whole sheet. "
-        "Thin dark technical annotations, measurement markers, small data "
-        "labels and faint crosshairs from a radiology archive sheet frame "
-        "the figure. "
-        "The palette is cold monochrome grayscale with one faint blood-red "
-        "or cyan accent inside the body. "
-        + _TEMPLATE_COMMON_TAIL
+        "texture across the whole sheet. Thin dark technical annotations, "
+        "measurement markers and small data labels from a radiology archive "
+        "sheet frame the figure. The palette is cold monochrome grayscale "
+        "with one faint blood-red or cyan accent inside the body. "
+        "The mood is clinical and documentary, like a leaked hospital scan of "
+        "something that should not exist."
     ),
 }
 
-DEFAULT_THEME = "light"
+DEFAULT_THEME = "surgical"
 
-# Portrait framing fits a full standing figure far better than the default
-# landscape and matches the reference board.
-GENERATE_IMAGE_SIZE = "portrait_4_3"
+# Krea uses aspect_ratio (not image_size). The surgical scene is a cinematic
+# film photograph of a body lying down, so it wants landscape; the radiograph
+# plate wants portrait.
+ASPECT_RATIOS = {"surgical": "3:2", "radiograph": "2:3"}
+
+# Optional style reference images (Krea 2 accepts up to 10) that lock the
+# project's look. Fill with public URLs of the reference board to anchor
+# every birth to it; empty means prompt-only.
+STYLE_REFERENCE_URLS: list[str] = []
 
 
 class ContentFlaggedError(Exception):
     """Raised when fal.ai's safety filter flags the generated image."""
 
 
-def generate_image(prompt: str, model: str = DEFAULT_MODEL,
+def generate_image(prompt: str, model: str = KREA_MODEL,
                    theme: str = DEFAULT_THEME) -> str:
-    """Generate an image from a prompt, forced into the app's house style.
+    """Generate the monster from scratch, forced into the house style.
 
-    The user-supplied prompt only describes the subject; it is always
-    wrapped in the theme's style template so every generation keeps the
-    radiographic aesthetic.
+    Used for births and re-anchors. The description from the genome only
+    supplies the creature (the patient on the table); the theme's style
+    template supplies everything else. Runs on Krea 2 Large, which is built
+    around aesthetic direction and accepts style reference images.
 
     Args:
-        prompt: Text description of the subject to generate.
+        prompt: Text description of the creature to generate.
         model: fal.ai model id to use.
-        theme: "dark" (glowing anatomy on black film) or "light" (black
-            anatomy on pale film).
+        theme: "surgical" (1970s analog operating-room photograph) or
+            "radiograph" (pale X-ray plate).
 
     Returns:
         Direct URL to the generated image.
 
     Raises:
         ValueError: If the prompt is empty.
-        ContentFlaggedError: If the safety filter flags the result (fal.ai
-            returns a blank/black image in that case).
+    """
+    prompt = prompt.strip()
+    if not prompt:
+        raise ValueError("The prompt cannot be empty.")
+
+    template = STYLE_TEMPLATES.get(theme, STYLE_TEMPLATES[DEFAULT_THEME])
+    styled_prompt = template.format(subject=prompt)
+    arguments = {
+        "prompt": styled_prompt,
+        "aspect_ratio": ASPECT_RATIOS.get(theme, ASPECT_RATIOS[DEFAULT_THEME]),
+    }
+    if STYLE_REFERENCE_URLS:
+        arguments["image_style_references"] = [
+            {"image_url": url} for url in STYLE_REFERENCE_URLS[:10]]
+
+    with logfire.span("generate image", model=model, subject=prompt,
+                      styled_prompt=styled_prompt, theme=theme,
+                      style_references=len(STYLE_REFERENCE_URLS)) as span:
+        result = fal_client.subscribe(model, arguments=arguments)
+        image_url = result["images"][0]["url"]
+        span.set_attribute("image_url", image_url)
+        return image_url
+
+
+def generate_image_legacy(prompt: str, model: str = DEFAULT_MODEL,
+                          theme: str = DEFAULT_THEME) -> str:
+    """Birth via FLUX schnell (previous engine). Kept as a fallback.
+
+    Safety checker disabled: descriptions distilled from visitors' intimate
+    or traumatic stories trip it with false positives, and a flagged birth
+    would discard their contributions.
     """
     prompt = prompt.strip()
     if not prompt:
@@ -124,27 +175,21 @@ def generate_image(prompt: str, model: str = DEFAULT_MODEL,
     template = STYLE_TEMPLATES.get(theme, STYLE_TEMPLATES[DEFAULT_THEME])
     styled_prompt = template.format(subject=prompt)
 
-    # Safety checker disabled: descriptions distilled from visitors' intimate
-    # or traumatic stories trip it with false positives, and a flagged birth
-    # or re-anchor would discard their contributions. The fixed clinical
-    # X-ray style template keeps outputs non-explicit by construction.
-    with logfire.span("generate image", model=model, subject=prompt,
-                      styled_prompt=styled_prompt) as span:
+    with logfire.span("generate image (legacy schnell)", model=model,
+                      subject=prompt, styled_prompt=styled_prompt) as span:
         result = fal_client.subscribe(
             model,
             arguments={"prompt": styled_prompt,
-                       "image_size": GENERATE_IMAGE_SIZE,
+                       "image_size": ("landscape_4_3" if theme == "surgical"
+                                      else "portrait_4_3"),
                        "output_format": OUTPUT_FORMAT,
                        "enable_safety_checker": False},
         )
-
         if any(result.get("has_nsfw_concepts", [])):
             span.set_attribute("flagged", True)
             raise ContentFlaggedError(
-                "The prompt was flagged by the safety filter, so the image came back "
-                "blank. Try rephrasing it."
-            )
-
+                "The prompt was flagged by the safety filter, so the image "
+                "came back blank. Try rephrasing it.")
         image_url = result["images"][0]["url"]
         span.set_attribute("image_url", image_url)
         return image_url
@@ -155,12 +200,18 @@ def generate_image(prompt: str, model: str = DEFAULT_MODEL,
 # paragraph competes with the actual instruction for the model's attention and
 # ends up suppressing the requested change (verified empirically).
 EDIT_STYLE_GUARDS = {
-    "dark": ("Keep the dark X-ray film aesthetic: matte analog film grain, "
-             "glowing anatomy on a black film background, never glossy 3D."),
-    "light": ("Keep the pale radiograph film aesthetic: matte analog film "
-              "grain, dark anatomy on a white-gray film background, never "
-              "glossy 3D."),
+    "surgical": ("Keep the 1970s analog surgical photograph look: saturated "
+                 "green-turquoise drapes, warm brown shadows, harsh overhead "
+                 "spotlights, visible film grain."),
+    "radiograph": ("Keep the pale radiograph film aesthetic: matte analog "
+                   "film grain, dark anatomy on a white-gray film "
+                   "background, never glossy 3D."),
 }
+
+# Qwen supports a negative prompt (FLUX does not). Used to keep edits from
+# drifting into the neon/CGI look the models fall back on.
+EDIT_NEGATIVE_PROMPT = ("neon glow, blown-out highlights, cartoon, 3D render, "
+                        "video game, oversaturated, plastic, digital art")
 
 # fal default is 3.5, which is tuned for subtle photo edits and is too
 # conservative for the visible anatomical mutations this project needs.
@@ -175,9 +226,58 @@ EDIT_GUIDANCE_SCALE = 5.0
 EDIT_SAFETY_TOLERANCE = "6"
 
 
-def edit_image(image_url: str, instruction: str, model: str = KONTEXT_MODEL,
-               guidance_scale: float = EDIT_GUIDANCE_SCALE,
+def edit_image(image_url: str, instruction: str,
+               model: str = QWEN_EDIT_MODEL,
                theme: str = DEFAULT_THEME) -> str:
+    """Transform the monster with an editing instruction (Qwen Image Edit).
+
+    Primary edit path. Qwen 2511 preserves everything it was not asked to
+    change (film borders, grain, palette), runs in ~5s, has no prompt-level
+    censorship, and takes a negative prompt to keep edits away from the
+    neon/CGI look.
+
+    Args:
+        image_url: Public URL of the current image.
+        instruction: Imperative editing instruction (what should change).
+        model: fal.ai model id to use.
+        theme: Style of the current image, for the guard phrase.
+
+    Returns:
+        Direct URL to the edited image.
+
+    Raises:
+        ValueError: If the instruction is empty.
+        ContentFlaggedError: If the safety filter flags the result.
+    """
+    instruction = instruction.strip()
+    if not instruction:
+        raise ValueError("The edit instruction cannot be empty.")
+
+    guard = EDIT_STYLE_GUARDS.get(theme, EDIT_STYLE_GUARDS[DEFAULT_THEME])
+    with logfire.span("edit image", model=model, instruction=instruction,
+                      full_prompt=f"{instruction} {guard}",
+                      source_image_url=image_url, theme=theme) as span:
+        result = fal_client.subscribe(
+            model,
+            arguments={"prompt": f"{instruction} {guard}",
+                       "image_urls": [image_url],
+                       "negative_prompt": EDIT_NEGATIVE_PROMPT,
+                       "output_format": OUTPUT_FORMAT,
+                       "enable_safety_checker": False},
+        )
+        if any(result.get("has_nsfw_concepts", [])):
+            span.set_attribute("flagged", True)
+            raise ContentFlaggedError(
+                "The edit was flagged by the safety filter. Try rephrasing it.")
+        edited_url = result["images"][0]["url"]
+        span.set_attribute("image_url", edited_url)
+        return edited_url
+
+
+def edit_image_kontext(image_url: str, instruction: str,
+                       model: str = KONTEXT_MODEL,
+                       guidance_scale: float = EDIT_GUIDANCE_SCALE,
+                       theme: str = DEFAULT_THEME) -> str:
     """Transform an existing image with an editing instruction (FLUX Kontext).
 
     Unlike generate_image, this preserves the creature and only applies the
@@ -308,6 +408,139 @@ def refresh_image(image_url: str, description: str,
         refreshed_url = result["images"][0]["url"]
         span.set_attribute("image_url", refreshed_url)
         return refreshed_url
+
+
+def segment_region(image_url: str, region_phrase: str) -> str:
+    """Text-prompted segmentation: returns the mask URL for a body region.
+
+    The mask is dilated (room for the transformation to breathe) and
+    blurred (soft blending at the seams). Raises ValueError if the region
+    covers almost nothing (not found) or most of the image (too broad for
+    a local edit — the caller should fall back to a global Kontext edit).
+    """
+    with logfire.span("segment region", model=SEGMENT_MODEL,
+                      region=region_phrase,
+                      source_image_url=image_url) as span:
+        result = fal_client.subscribe(SEGMENT_MODEL, arguments={
+            "prompt": region_phrase,
+            "image_url": image_url,
+            "mask_only": True,
+            "expand_mask": 20,
+            "blur_mask": 8,
+        })
+        mask_url = result["image"]["url"]
+        coverage = _mask_coverage(mask_url)
+        span.set_attribute("mask_url", mask_url)
+        span.set_attribute("coverage", round(coverage, 4))
+        if coverage < 0.005:
+            raise ValueError(
+                f"Region '{region_phrase}' not found in the image "
+                f"(mask covers {coverage:.1%}).")
+        if coverage > 0.30:
+            # A "local" region that swallows a third of the frame means the
+            # segmenter grabbed the whole creature (e.g. "the jaw" matching
+            # the full body) — repainting it would destroy the monster.
+            # Reject so the pipeline falls back to a Kontext edit.
+            raise ValueError(
+                f"Region '{region_phrase}' covers {coverage:.0%} of the "
+                "image; too broad for a local edit.")
+        return mask_url
+
+
+def _mask_coverage(mask_url: str) -> float:
+    """Fraction of the mask that is selected (white)."""
+    import io
+
+    import httpx
+    from PIL import Image
+
+    data = httpx.get(mask_url, follow_redirects=True).content
+    mask = Image.open(io.BytesIO(data)).convert("L")
+    histogram = mask.histogram()
+    selected = sum(histogram[128:])
+    total = sum(histogram)
+    return selected / total if total else 0.0
+
+
+def fill_region(image_url: str, mask_url: str, region_prompt: str,
+                theme: str = DEFAULT_THEME) -> str:
+    """Repaint ONLY the masked region (FLUX Fill inpainting).
+
+    Unlike Kontext, pixels outside the mask are untouched: no style drift,
+    no quality loss, and the change inside the mask is guaranteed visible.
+    The prompt should describe what the region BECOMES (painted content),
+    not an editing instruction.
+    """
+    guard = EDIT_STYLE_GUARDS.get(theme, EDIT_STYLE_GUARDS[DEFAULT_THEME])
+    with logfire.span("fill region", model=FILL_MODEL,
+                      region_prompt=region_prompt, mask_url=mask_url,
+                      source_image_url=image_url) as span:
+        result = fal_client.subscribe(FILL_MODEL, arguments={
+            "image_url": image_url,
+            "mask_url": mask_url,
+            "prompt": f"{region_prompt} {guard}",
+            "output_format": OUTPUT_FORMAT,
+            "safety_tolerance": EDIT_SAFETY_TOLERANCE,
+        })
+        if any(result.get("has_nsfw_concepts", [])):
+            span.set_attribute("flagged", True)
+            raise ContentFlaggedError(
+                "The fill was flagged by the safety filter.")
+        filled_url = result["images"][0]["url"]
+        span.set_attribute("image_url", filled_url)
+        return filled_url
+
+
+# Blend factor for palette normalization: 1.0 would clamp the edit's colors
+# fully back to the pre-edit image (killing intentional accents); 0 disables.
+PALETTE_MATCH_BLEND = 0.5
+
+
+def match_palette(edited_url: str, reference_url: str,
+                  blend: float = PALETTE_MATCH_BLEND) -> str:
+    """Pull an edited image's global color statistics toward the reference.
+
+    Kontext repaints the whole frame, so each edit drifts the global palette
+    a little (accumulating into e.g. a fully rust-colored creature). This
+    shifts each RGB channel's mean partially back toward the pre-edit image
+    (mean-shift only: std scaling explodes on near-uniform backgrounds, and
+    LAB via PIL's ImageCms proved unreliable). Runs locally (PIL + numpy,
+    no API cost); on any failure the edit is returned untouched — color
+    normalization must never break the pipeline.
+
+    Returns a URL (fal storage) of the normalized PNG, or edited_url as-is.
+    """
+    with logfire.span("match palette", edited_url=edited_url,
+                      reference_url=reference_url, blend=blend) as span:
+        try:
+            import io
+
+            import httpx
+            import numpy as np
+            from PIL import Image
+
+            def _load(url: str):
+                data = httpx.get(url, follow_redirects=True).content
+                image = Image.open(io.BytesIO(data)).convert("RGB")
+                return np.asarray(image, dtype=np.float64)
+
+            e, r = _load(edited_url), _load(reference_url)
+
+            deltas = r.mean(axis=(0, 1)) - e.mean(axis=(0, 1))
+            span.set_attribute("channel_deltas",
+                               [round(d, 1) for d in deltas])
+            e += blend * deltas
+
+            normalized = Image.fromarray(
+                np.clip(e, 0, 255).astype("uint8"), mode="RGB")
+            buffer = io.BytesIO()
+            normalized.save(buffer, format="PNG")
+            url = fal_client.upload(buffer.getvalue(), "image/png")
+            span.set_attribute("image_url", url)
+            return url
+        except Exception as exc:
+            span.set_attribute("error", str(exc))
+            return edited_url
 
 
 def transcribe_audio(audio_bytes: bytes) -> str:
