@@ -289,7 +289,7 @@ function Step({
         <h2 className="font-display text-3xl leading-tight text-ink-50 sm:text-4xl">
           {title}
         </h2>
-        {help && <p className="max-w-2xl text-sm leading-relaxed text-ink-500">{help}</p>}
+        {help && <p className="max-w-2xl text-sm leading-relaxed text-ink-300">{help}</p>}
       </div>
       {children}
     </section>

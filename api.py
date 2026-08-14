@@ -112,8 +112,8 @@ class Submission(BaseModel):
             self.responses, self.relation_today = [], ""
             return self
         for field in ("monster_who", "monster_look", "monster_effect"):
-            if len(getattr(self, field).split()) < 30:
-                raise ValueError(f"'{field}' needs at least 30 words.")
+            if len(getattr(self, field).split()) < 10:
+                raise ValueError(f"'{field}' needs at least 10 words.")
         if not self.emotions:
             raise ValueError("Select at least one emotion.")
         unknown_responses = sorted(set(self.responses) - set(RESPONSE_POSTURES))
@@ -140,7 +140,7 @@ def form_options() -> dict:
         "responses": list(RESPONSE_POSTURES),
         "relations": list(RELATION_INTENSITY),
         "styles": list(STYLE_TEMPLATES),
-        "min_words": 30,
+        "min_words": 10,
     }
 
 

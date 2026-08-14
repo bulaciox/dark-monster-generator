@@ -1,4 +1,4 @@
-app = "street-monster"
+app = "darkgallery-monstergenerator"
 # Stockholm: closest region to Copenhagen, where the installation runs.
 primary_region = "arn"
 
