@@ -21,6 +21,17 @@ KREA_MODEL = "krea/v2/large/text-to-image"
 # project's core problem.
 QWEN_EDIT_MODEL = "fal-ai/qwen-image-edit-2511"
 
+# Individual monsters (one per visitor) generate every image from scratch, so
+# there is no chained editing and no drift to defend against. FLUX.2 pro is the
+# strongest of the current fal line-up on dark, surreal, anatomical subject
+# matter, and exposes safety_tolerance for material the default filter reads as
+# violent when it is only clinical.
+MONSTER_MODEL = "fal-ai/flux-2-pro"
+# 1 is strictest, 5 most permissive. Visitors confide abuse, illness and
+# violence; the imagery stays metaphorical, but the default level rejects
+# anatomical language often enough to lose contributions.
+SAFETY_TOLERANCE = "5"
+
 # Legacy engines, kept as fallbacks (see pipeline.py).
 DEFAULT_MODEL = "fal-ai/flux/schnell"
 KONTEXT_MODEL = "fal-ai/flux-pro/kontext"
@@ -555,6 +566,195 @@ def transcribe_audio(audio_bytes: bytes) -> str:
     audio_url = fal_client.upload(audio_bytes, "audio/wav")
     result = fal_client.subscribe("fal-ai/whisper", arguments={"audio_url": audio_url})
     return result["text"].strip()
+
+
+# ---------------------------------------------------------------------------
+# Individual monsters: one organ image and one silhouette image per visitor.
+#
+# The look follows the directors' sketches: a body part rendered in luminous red
+# on darkness, and a near-black figure with that same organ burning inside it as
+# the only clear element. The two are generated independently -- they must show
+# the same organ under the same transformation, but need not match pixel for
+# pixel.
+# ---------------------------------------------------------------------------
+
+ORGAN_TEMPLATE = (
+    "A single anatomical specimen isolated on a pure black background: "
+    "{part}, {transformation}. "
+    "Rendered as a luminous deep-red anatomical study, fine crimson linework "
+    "over translucent tissue that glows from within, the whole form floating "
+    "in darkness with nothing else in the frame. Clinical medical-atlas "
+    "precision with a wet organic sheen, faint analog film grain. "
+    "No text, no labels, no measurement marks, no background detail."
+)
+
+# A few body parts from the emotion mapping read as sexual anatomy to the image
+# model's prompt checker, which rejects the request outright -- before
+# safety_tolerance can apply, since that governs the generated image rather than
+# the prompt. Naming the skeleton instead keeps the anatomy and its meaning
+# while reading unambiguously as a medical illustration.
+ANATOMICAL_ALIASES = {
+    "Pelvis and hips": "the bones of the pelvic girdle",
+}
+
+
+def _anatomical(part: str) -> str:
+    """The body part as it can safely be named to the image model."""
+    return ANATOMICAL_ALIASES.get(part, part.lower())
+
+# The two kinds of monster the test interviews produced. Roughly two thirds of
+# respondents named a person, one third an event or a system -- and a war should
+# never be handed an arbitrary human silhouette.
+FIGURE_TEMPLATES = {
+    "human": (
+        "A full-body silhouette of a single human figure, standing, seen "
+        "straight on, the entire body inside the frame with empty space all "
+        "around it. The figure is a dense mass of charcoal shadow, features "
+        "swallowed by darkness, unremarkable in shape -- someone you could "
+        "pass in the street. {form}"
+    ),
+    "environmental": (
+        "A vast dark formation filling the frame, seen straight on, its whole "
+        "extent visible with empty space around it. Not a creature and not a "
+        "person: a mass without a face, built from shadow and particulate "
+        "darkness, looming and unresolved at its edges. {form}"
+    ),
+}
+
+SILHOUETTE_TEMPLATE = (
+    "{figure} "
+    "{attributes}"
+    "Deep inside it, {organs} — luminous deep red, burning through the "
+    "darkness as the only clear element in the image. "
+    "Analog film photograph, heavy grain, near-black palette with a single red "
+    "accent, cold and documentary. No text, no lettering, no faces in focus."
+)
+
+
+def _organ_phrase(organs: list[dict]) -> str:
+    """The organs as they should read inside the silhouette."""
+    if not organs:
+        return "a single anatomical form"
+    pieces = [f"{_anatomical(o['part'])}, {o['transformation']}"
+              for o in organs]
+    return " and ".join(pieces)
+
+
+def _flagged(exc: Exception) -> bool:
+    """Whether fal rejected the PROMPT (not the image) as policy-violating.
+
+    This check runs before generation, so safety_tolerance -- which governs the
+    resulting image -- cannot relax it. The only remedy is different wording.
+    """
+    return "content_policy_violation" in str(exc)
+
+
+def _generate(prompts: list[str], image_size: str) -> str:
+    """Generate an image, stepping down to plainer wording if one is flagged.
+
+    The prompt checker runs before generation, so safety_tolerance -- which
+    governs the resulting image -- cannot relax it, and it is not deterministic:
+    the same prompt may pass on one call and be rejected on the next. Visitors'
+    accounts are also full of language it reads as violence ("raw", "exposed",
+    "streaming", "uninvited") even when the imagery is clinical.
+
+    So the prompts are ordered richest to plainest, and each rejection costs
+    some particularity rather than the whole image.
+    """
+    arguments = {
+        "image_size": image_size,
+        "output_format": "jpeg",
+        "safety_tolerance": SAFETY_TOLERANCE,
+    }
+    for index, prompt in enumerate(prompts):
+        try:
+            result = fal_client.subscribe(
+                MONSTER_MODEL, arguments={**arguments, "prompt": prompt})
+            return result["images"][0]["url"]
+        except Exception as exc:
+            last_prompt = index == len(prompts) - 1
+            if not _flagged(exc) or last_prompt:
+                raise
+            logfire.warn("prompt flagged, stepping down", prompt=prompt,
+                         remaining=len(prompts) - index - 1)
+    raise RuntimeError("unreachable")  # pragma: no cover
+
+
+def generate_organ(part: str, transformation: str) -> str:
+    """One body part alone, red on black — the organ screen.
+
+    Args:
+        part: Body part from the emotion mapping, e.g. "Heart".
+        transformation: How this emotion group deforms it.
+
+    Returns:
+        Direct URL to the generated image.
+    """
+    anatomical = _anatomical(part)
+    with logfire.span("generate organ", model=MONSTER_MODEL, part=part,
+                      transformation=transformation) as span:
+        image_url = _generate([
+            ORGAN_TEMPLATE.format(part=anatomical,
+                                  transformation=transformation),
+            # Without the transformation the organ says less, but it still says
+            # which body part this visitor's emotions claimed.
+            ORGAN_TEMPLATE.format(part=anatomical,
+                                  transformation="anatomically altered"),
+        ], "square_hd")
+        span.set_attribute("image_url", image_url)
+        return image_url
+
+
+def generate_silhouette(identity: dict, organs: list[dict]) -> str:
+    """The visitor's monster as a whole — the large screen.
+
+    The identity package supplies WHO it is (already transposed into shape,
+    texture and light by the curator, never naming anyone), and the organs
+    supply what the emotions did to it.
+
+    Args:
+        identity: Output of curator.extract_identity.
+        organs: Output of curator.select_organs.
+
+    Returns:
+        Direct URL to the generated image.
+    """
+    monster_type = identity.get("monster_type", "human")
+    template = FIGURE_TEMPLATES.get(monster_type, FIGURE_TEMPLATES["human"])
+    figure = template.format(form=identity.get("who_what", "").strip())
+    bare_figure = template.format(form="")
+
+    # Everything the curator extracted from the free text, as one sentence of
+    # material and light. Absent for visitors who never met a monster.
+    bits = [identity.get("object", "")] + list(identity.get("traits") or [])
+    bits = [b.strip() for b in bits if b and b.strip()]
+    attributes = ""
+    if bits:
+        attributes = "Across it: " + "; ".join(bits) + ". "
+    if identity.get("where"):
+        attributes += f"Behind it: {identity['where'].strip()}. "
+
+    organ_phrase = _organ_phrase(organs)
+    # Just the body parts, with the transformations that carry the charged
+    # language dropped.
+    plain_organs = (" and ".join(_anatomical(o["part"]) for o in organs)
+                    or "a single anatomical form")
+
+    with logfire.span("generate silhouette", model=MONSTER_MODEL,
+                      monster_type=monster_type, identity=identity,
+                      organs=organs) as span:
+        image_url = _generate([
+            SILHOUETTE_TEMPLATE.format(figure=figure, attributes=attributes,
+                                       organs=organ_phrase),
+            # Drop the visitor's own material, keep the anatomy.
+            SILHOUETTE_TEMPLATE.format(figure=bare_figure, attributes="",
+                                       organs=organ_phrase),
+            # Drop the transformations too: a figure and its organ, nothing more.
+            SILHOUETTE_TEMPLATE.format(figure=bare_figure, attributes="",
+                                       organs=plain_organs),
+        ], "portrait_4_3")
+        span.set_attribute("image_url", image_url)
+        return image_url
 
 
 if __name__ == "__main__":

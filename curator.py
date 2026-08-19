@@ -187,14 +187,18 @@ EMOTION_GROUPS = {
 # Emotion -> its group, for O(1) lookup.
 EMOTION_TO_GROUP = {e: g for g, es in EMOTION_GROUPS.items() for e in es}
 
-# Body parts per group, most significant first.
+# Body parts per group, ordered as levels of intensity: index 0 is a mild
+# response, index 2 the most serious. The mapping document assigns genitals to
+# Vulnerability and Desire; they are represented indirectly here, as the pelvis,
+# so the meaning survives on street-facing screens.
 GROUP_BODY_PARTS = {
     "Fear and threat": ["Eyes", "Heart", "Skin"],
     "Anger and rejection": ["Mouth and teeth", "Hands and fists",
                             "Stomach and gut"],
-    "Vulnerability": ["Chest", "Shoulders and back"],
+    "Vulnerability": ["Chest", "Shoulders and back", "Pelvis and hips"],
     "Loss": ["Eyes and tear ducts", "Heart", "Lungs"],
-    "Desire and attraction": ["Mouth, lips and tongue", "Eyes"],
+    "Desire and attraction": ["Mouth, lips and tongue", "Eyes",
+                              "Pelvis and hips"],
     "Energy and resistance": ["Legs and feet", "Spine", "Hands and arms"],
 }
 
@@ -218,6 +222,8 @@ GROUP_TRANSFORMATIONS = {
         "laid open and exposed, unshielded",
     ("Vulnerability", "Shoulders and back"):
         "shrunken, bent, carrying an unseen burden",
+    ("Vulnerability", "Pelvis and hips"):
+        "drawn inward and concealed, shielded, diminished",
     ("Loss", "Eyes and tear ducts"):
         "swollen and streaming, ducts enlarged and raw",
     ("Loss", "Heart"):
@@ -228,6 +234,8 @@ GROUP_TRANSFORMATIONS = {
         "exaggerated lips, tongue, softness and openness",
     ("Desire and attraction", "Eyes"):
         "focused, luminous, elongated, hypnotic",
+    ("Desire and attraction", "Pelvis and hips"):
+        "opened outward and warm, tilted, drawn toward something",
     ("Energy and resistance", "Legs and feet"):
         "braced and driving forward, muscles gathered",
     ("Energy and resistance", "Spine"):
@@ -282,6 +290,65 @@ def group_of(emotion: str) -> str | None:
 def transformation_for(group: str, part: str) -> str:
     """How this group transforms this body part (see GROUP_TRANSFORMATIONS)."""
     return GROUP_TRANSFORMATIONS.get((group, part), "distorted and altered")
+
+
+# At most this many organs per monster. Rika worked the same way by hand:
+# "sometimes I need to choose one trigger word and not use all of the answer.
+# Some people wrote a list of feelings, but I chose to focus on only one or two."
+MAX_ORGANS = 2
+
+
+def select_organs(sub: dict) -> list[dict]:
+    """Which body parts this visitor's emotions claim, and how they deform.
+
+    Follows the directors' mapping document: each emotion group owns three body
+    parts read as levels of intensity (1 mild, 3 most serious). The level comes
+    from how many emotions of that group were ticked, scaled by how the visitor
+    relates to the experience today -- an unresolved wound pushes the anatomy
+    further than one that has been made peace with.
+
+    Returns at most MAX_ORGANS entries, strongest group first, each shaped as
+    {"part", "group", "level", "transformation"}.
+    """
+    intensity = RELATION_INTENSITY.get(sub.get("relation_today", ""), 1.0)
+    if not sub.get("encountered", True):
+        # They have never met a monster: their emotions speak faintly.
+        intensity *= NO_ENCOUNTER_INTENSITY
+
+    counts: dict[str, int] = {}
+    for emotion in sub.get("emotions", []):
+        group = group_of(emotion)
+        if group:
+            counts[group] = counts.get(group, 0) + 1
+
+    organs = []
+    ranked = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)
+    for group, count in ranked[:MAX_ORGANS]:
+        parts = GROUP_BODY_PARTS.get(group)
+        if not parts:
+            continue
+        # 1 emotion -> level 1, 2 -> level 2, 3+ -> level 3, then modulated by
+        # today's relation to the experience and clamped to the parts we have.
+        level = max(1, min(len(parts), round(count * intensity)))
+        part = parts[level - 1]
+        if any(o["part"] == part for o in organs):
+            # Groups deliberately share body parts (the mapping document repeats
+            # them on purpose), so two groups can land on the same one. Showing
+            # it twice says nothing extra — step down to the nearest free level
+            # in this group, and skip the group if it has nothing else to add.
+            alternatives = [(abs(i + 1 - level), i + 1, p)
+                            for i, p in enumerate(parts)
+                            if not any(o["part"] == p for o in organs)]
+            if not alternatives:
+                continue
+            _distance, level, part = min(alternatives)
+        organs.append({
+            "part": part,
+            "group": group,
+            "level": level,
+            "transformation": transformation_for(group, part),
+        })
+    return organs
 
 
 def _ability_effect(ability: str) -> str | None:
@@ -473,7 +540,57 @@ becomes a breached membrane; loss becomes a hollow cavity.
 Answer with ONLY the requested text, no preamble, no quotes."""
 
 
-def _llm(prompt: str, image_url: str | None = None) -> str | None:
+# ---------------------------------------------------------------------------
+# Individual monsters: one per visitor, four outputs (organ, silhouette, story,
+# title). The governing rule, from the directors' brief:
+#
+#   Free text determines IDENTITY. Selected emotions determine EXPRESSION.
+#
+# This is the opposite of the collective path above, where free text was kept
+# out of the visuals so a single visitor could not redesign the shared creature.
+# ---------------------------------------------------------------------------
+
+MONSTER_SYSTEM = """\
+You are the curator of "Street Monster", an art installation at the Golden Days
+festival in Copenhagen. Each visitor answers a questionnaire about a monster in
+their life -- someone or something that felt monstrous to them -- and from those
+answers you build THAT PERSON'S monster, shown on the installation's screens.
+
+The visitor must be able to look at the screens and recognise their own monster.
+Everyone else must not be able to identify who or what it was.
+
+This is the central craft of your work: you TRANSPOSE, you never copy.
+Concrete detail is what creates recognition, and naming it is what betrays the
+visitor to whoever is standing next to them. So every attribute is carried over
+as material, shape, texture, light or posture, never as the thing itself:
+
+  "my teacher in a grey cardigan"  ->  grey wool texture across the shoulders
+  "the classroom where it happened" ->  hard parallel lines, cold overhead light
+  "his pointer"                     ->  a thin rigid rod extending from the body
+  "my father"                       ->  a shape looming from above, too large
+  "the war"                         ->  smoke, rubble, a horizon that will not
+                                        settle
+
+NEVER name a person, a role, a relationship, a place, an institution or an
+event in anything that will become an image. No teacher, father, mother,
+partner, boss, school, hospital, church, army, country or war. Those words
+belong only to the written story, and even there they become archetypes: a
+father becomes a mentor or an oracle, a manager becomes a gatekeeper.
+
+Visitors often confide painful or traumatic experiences (abuse, loss, illness,
+violence). This is the point of the artwork: giving form to what is hard to say.
+Treat such material with dignity and artistic seriousness -- always translate it
+into anatomical metaphor (cracks, hollows, scars, concealment, fractures,
+voids). Never refuse or moralise, and never render violence or sexuality
+literally: the aesthetic is clinical and metaphorical, not graphic. A wound
+becomes a fissure in bone; violation becomes a breached membrane; loss becomes
+a hollow cavity.
+
+Answer with ONLY what is asked for, no preamble, no quotes, no markdown."""
+
+
+def _llm(prompt: str, image_url: str | None = None,
+         system: str = CURATOR_SYSTEM) -> str | None:
     """Call the LLM through fal.ai's OpenRouter router; None on any failure.
 
     If image_url is given, the model SEES the image (vision input), so it can
@@ -495,7 +612,7 @@ def _llm(prompt: str, image_url: str | None = None) -> str | None:
                 LLM_ENDPOINT,
                 arguments={
                     "model": LLM_MODEL,
-                    "instructions": CURATOR_SYSTEM,
+                    "instructions": system,
                     "input": llm_input,
                 },
             )
@@ -817,6 +934,168 @@ def build_full_description(genome: dict) -> str:
         span.set_attribute("description", description)
         span.set_attribute("used_fallback", True)
         return description
+
+
+# ---------------------------------------------------------------------------
+# Individual monsters
+# ---------------------------------------------------------------------------
+
+# Nothing in the identity package may name a real person, place or event, so an
+# empty package is a safe fallback: the emotions alone still drive the image.
+EMPTY_IDENTITY = {
+    "who_what": "",
+    "where": "",
+    "object": "",
+    "traits": [],
+    "language": "",
+    "monster_type": "human",
+}
+
+
+def _parse_json(raw: str | None) -> dict | None:
+    """Best-effort JSON object out of an LLM reply (may be fenced or chatty)."""
+    if not raw:
+        return None
+    text = raw.strip()
+    start, end = text.find("{"), text.rfind("}")
+    if start == -1 or end == -1:
+        return None
+    try:
+        parsed = json.loads(text[start:end + 1])
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def extract_identity(sub: dict) -> dict:
+    """The visitor's monster as visual identity, transposed out of their words.
+
+    Free text determines WHO the monster is; the emotions (see select_organs)
+    determine how the body deforms. Everything here is written as material,
+    shape, light or posture -- never as the person, place or event itself, so
+    the visitor recognises their monster and nobody else can identify it.
+
+    monster_type splits the two kinds of answer the test interviews produced:
+    roughly two thirds named a person ("human"), one third named an event or
+    a system ("environmental"), and a war should not be handed an arbitrary
+    human silhouette.
+    """
+    if not sub.get("encountered", True):
+        # They never met a monster: there is no account to transpose.
+        return dict(EMPTY_IDENTITY)
+
+    answers = "\n".join(
+        f"{label}: {sub.get(key, '')}"
+        for key, label in (
+            ("monster_who", "Who or what the monster was"),
+            ("monster_look", "What it looked like"),
+            ("monster_effect", "How it affected their life"),
+        )
+        if sub.get(key)
+    )
+
+    prompt = (
+        "A visitor described their monster:\n\n" + answers +
+        "\n\nTranspose this into a visual identity and reply with ONLY a JSON "
+        "object with these keys:\n"
+        '  "monster_type": "human" if the monster was a person or a '
+        'relationship, "environmental" if it was an event, a system, an '
+        "illness, a place or a condition.\n"
+        '  "who_what": 10-20 words. The monster\'s FORM, as pure shape, scale '
+        "and bearing. For a human monster: how it stands, its proportions, how "
+        "it occupies space. For an environmental one: what kind of mass, "
+        "swarm, architecture, weather or landscape it is. Never a role or a "
+        "relationship.\n"
+        '  "where": 5-12 words. The setting reduced to light, geometry and '
+        "atmosphere only. Never a named place.\n"
+        '  "object": 4-10 words. One significant object from the account, '
+        "described as bare form and material. Empty string if there is none.\n"
+        '  "traits": 2-4 strings, each 3-8 words. Concrete visual '
+        "characteristics -- texture, material, posture, colour, movement.\n"
+        '  "language": 2-6 words taken from or close to the visitor\'s own '
+        "phrasing, evocative rather than identifying.\n\n"
+        "Every value must survive the test: the visitor recognises it, a "
+        "stranger learns nothing about who or what it was."
+    )
+
+    with logfire.span("extract identity", answers=answers) as span:
+        parsed = _parse_json(_llm(prompt, system=MONSTER_SYSTEM))
+        if not parsed:
+            span.set_attribute("used_fallback", True)
+            return dict(EMPTY_IDENTITY)
+
+        traits = parsed.get("traits")
+        identity = {
+            "who_what": str(parsed.get("who_what") or "").strip(),
+            "where": str(parsed.get("where") or "").strip(),
+            "object": str(parsed.get("object") or "").strip(),
+            "traits": [str(t).strip() for t in traits][:4] if isinstance(traits, list) else [],
+            "language": str(parsed.get("language") or "").strip(),
+            "monster_type": ("environmental"
+                             if parsed.get("monster_type") == "environmental"
+                             else "human"),
+        }
+        span.set_attribute("identity", identity)
+        span.set_attribute("used_fallback", False)
+        return identity
+
+
+def build_story_and_title(sub: dict, identity: dict) -> dict:
+    """The two written outputs: a scene from the past, a line about the present.
+
+    Per the directors: questions 3-5 feed the story, 5-6 feed the title. The
+    story dramatises the encounter -- "either where the character runs away,
+    breaks free, steps up, strikes back, forgives" -- while the title comments
+    on where the visitor stands today ("I retire in peace", "It's alright to
+    run", "Still clueless?").
+
+    Real people become archetypes here, never themselves: a father becomes a
+    mentor or an oracle. Returns {"story", "title"}; either may be empty if the
+    call fails, and the "no" branch has no encounter to dramatise.
+    """
+    if not sub.get("encountered", True):
+        return {"story": "", "title": ""}
+
+    postures = [RESPONSE_POSTURES.get(r, r) for r in sub.get("responses", [])]
+    parts = [
+        f"How it affected them: {sub.get('monster_effect', '')}",
+        f"Emotions they felt: {', '.join(sub.get('emotions', [])) or 'none given'}",
+        f"How they responded: {', '.join(sub.get('responses', [])) or 'none given'}",
+        f"Where they stand today: {sub.get('relation_today', '') or 'not said'}",
+        f"The monster's form: {identity.get('who_what', '')}",
+    ]
+
+    prompt = (
+        "A visitor's encounter with their monster:\n\n" + "\n".join(parts) +
+        "\n\nWrite two things and reply with ONLY a JSON object:\n"
+        '  "story": 40-70 words. One scene from a tale, in the third person, '
+        "in which the visitor is the main character meeting this monster. "
+        "Dramatise their response into the register of myth or fable -- "
+        "running, breaking free, standing up, striking back, forgiving, "
+        "enduring. Any real person becomes an archetype (a mentor, an oracle, "
+        "a gatekeeper, a shadow), never a father, teacher, manager or "
+        "partner. Name no real place or event.\n"
+        '  "title": 2-6 words. A line about where they stand NOW, spoken as '
+        "if the tale had a caption. It may be a statement or a question. In "
+        'the register of: "I retire in peace", "It\'s alright to run", '
+        '"Still clueless?", "Did I call for you?"'
+    )
+    if postures:
+        prompt += f"\n\nTheir bearing in the scene: {'; '.join(postures[:3])}."
+
+    with logfire.span("build story and title") as span:
+        parsed = _parse_json(_llm(prompt, system=MONSTER_SYSTEM))
+        if not parsed:
+            span.set_attribute("used_fallback", True)
+            return {"story": "", "title": ""}
+        result = {
+            "story": str(parsed.get("story") or "").strip(),
+            "title": str(parsed.get("title") or "").strip(),
+        }
+        span.set_attribute("story", result["story"])
+        span.set_attribute("title", result["title"])
+        span.set_attribute("used_fallback", False)
+        return result
 
 
 if __name__ == "__main__":

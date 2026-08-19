@@ -27,11 +27,13 @@ from curator import (
     RESPONSE_POSTURES,
     genome_summary,
 )
-from generator import DEFAULT_THEME, STYLE_TEMPLATES
+from generator import STYLE_TEMPLATES
 from pipeline import process_submission
 from storage import (
+    get_monster,
     get_state,
     list_generations,
+    list_monsters,
     list_submissions,
     reset_day,
     today,
@@ -124,12 +126,34 @@ class Submission(BaseModel):
         return self
 
 
-class SubmissionResult(BaseModel):
-    kind: str          # initial | edit | reanchor | absorbed
-    image_url: str | None
-    previous_image_url: str | None
-    version: int | None
-    iteration: int | None
+class Monster(BaseModel):
+    """One visitor's monster: the four outputs the installation shows."""
+
+    id: str
+    number: int                    # respondent number, shown beside the title
+    day: str
+    monster_type: str              # human | environmental
+    organ_image_url: str | None
+    silhouette_image_url: str | None
+    story: str
+    title: str
+    organs: list[dict]
+    identity: dict
+
+    @classmethod
+    def from_row(cls, row: dict) -> "Monster":
+        return cls(
+            id=str(row["id"]),
+            number=row.get("number") or 0,
+            day=str(row.get("day") or today()),
+            monster_type=row.get("monster_type") or "human",
+            organ_image_url=row.get("organ_image_url"),
+            silhouette_image_url=row.get("silhouette_image_url"),
+            story=row.get("story") or "",
+            title=row.get("title") or "",
+            organs=row.get("organs") or [],
+            identity=row.get("identity") or {},
+        )
 
 
 @app.get("/api/form")
@@ -179,26 +203,32 @@ def submissions(day: str | None = None) -> list[dict]:
     return list_submissions(day=day or today())
 
 
-@app.post("/api/submissions", response_model=SubmissionResult)
-def create_submission(sub: Submission,
-                      theme: str = DEFAULT_THEME) -> SubmissionResult:
-    """Fold a visitor's answers into the monster and return the new image.
+@app.post("/api/submissions", response_model=Monster)
+def create_submission(sub: Submission) -> Monster:
+    """Turn a visitor's answers into their own monster and return it.
 
-    Synchronous on purpose: a birth takes ~30s and an edit ~12s, and the UI
-    shows a waiting screen meanwhile.
+    Synchronous on purpose: generation takes ~20-30s and the UI shows a
+    waiting screen meanwhile.
     """
-    previous = get_state()
     try:
-        saved, kind = process_submission(sub.model_dump(), theme)
+        monster, _kind = process_submission(sub.model_dump())
     except Exception as exc:  # storage/model failure — surface it to the UI
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return SubmissionResult(
-        kind=kind,
-        image_url=saved.get("image_url"),
-        previous_image_url=(previous or {}).get("image_url"),
-        version=saved.get("version"),
-        iteration=saved.get("iteration"),
-    )
+    return Monster.from_row(monster)
+
+
+@app.get("/api/monsters", response_model=list[Monster])
+def monsters(day: str | None = None) -> list[Monster]:
+    """Visitors' monsters, newest first; optionally only one day's."""
+    return [Monster.from_row(row) for row in list_monsters(day=day)]
+
+
+@app.get("/api/monsters/{monster_id}", response_model=Monster)
+def monster_by_id(monster_id: str) -> Monster:
+    row = get_monster(monster_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="No such monster.")
+    return Monster.from_row(row)
 
 
 @app.post("/api/reset")

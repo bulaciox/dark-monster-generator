@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Option } from '@/components/ui/option'
 import { Progress } from '@/components/ui/progress'
 import { Textarea } from '@/components/ui/textarea'
-import { api, type FormOptions, type Submission, type SubmissionResult } from '@/lib/api'
+import { api, type FormOptions, type Monster, type Submission } from '@/lib/api'
 import { cn, wordCount } from '@/lib/utils'
 
 /** Q1 starts unanswered, so neither Yes nor No looks pre-selected. */
@@ -47,7 +47,7 @@ export function Contribute({ onFinished }: { onFinished: () => void }) {
   const [answers, setAnswers] = useState<Answers>(EMPTY)
   const [step, setStep] = useState(0)
   const [sending, setSending] = useState(false)
-  const [result, setResult] = useState<SubmissionResult | null>(null)
+  const [result, setResult] = useState<Monster | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -117,11 +117,10 @@ export function Contribute({ onFinished }: { onFinished: () => void }) {
         <div className="max-w-md space-y-6 text-center">
           <Loader2 className="mx-auto size-6 animate-spin text-ink-300" />
           <p className="font-display text-2xl text-ink-50">
-            The monster is absorbing your answers
+            Your monster is taking shape
           </p>
           <p className="text-sm leading-relaxed text-ink-500">
-            Your experience is being folded into the body on the table together
-            with everyone else's. This takes a moment.
+            Your answers are being read and given a body. This takes a moment.
           </p>
         </div>
       </Centered>
@@ -289,7 +288,7 @@ function Step({
         <h2 className="font-display text-3xl leading-tight text-ink-50 sm:text-4xl">
           {title}
         </h2>
-        {help && <p className="max-w-2xl text-sm leading-relaxed text-ink-300">{help}</p>}
+        {help && <p className="max-w-2xl text-sm leading-relaxed text-ink-200">{help}</p>}
       </div>
       {children}
     </section>
@@ -309,47 +308,46 @@ function Result({
   result,
   onFinished,
 }: {
-  result: SubmissionResult
+  result: Monster
   onFinished: () => void
 }) {
-  const headline =
-    result.kind === 'initial'
-      ? 'Your answers gave the monster its body'
-      : result.kind === 'absorbed'
-        ? 'The monster absorbed your answers'
-        : 'The monster changed because of you'
-
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-8 px-6 py-12">
-      <h2 className="text-center font-display text-3xl text-ink-50">{headline}</h2>
-
-      <div
-        className={cn(
-          'grid gap-6',
-          result.previous_image_url && result.kind !== 'initial'
-            ? 'sm:grid-cols-2'
-            : 'sm:grid-cols-1',
-        )}
-      >
-        {result.previous_image_url && result.kind !== 'initial' && (
-          <Frame src={result.previous_image_url} caption="Before" />
-        )}
-        {result.image_url && (
-          <Frame
-            src={result.image_url}
-            caption={result.kind === 'initial' ? undefined : 'After'}
-          />
+    <div className="mx-auto w-full max-w-3xl space-y-10 px-6 py-12">
+      <div className="space-y-2 text-center">
+        <p className="text-xs uppercase tracking-[0.3em] text-ink-500">
+          No. {result.number}
+        </p>
+        {result.title && (
+          <h2 className="font-display text-3xl text-ink-50 sm:text-4xl">
+            {result.title}
+          </h2>
         )}
       </div>
 
-      <p className="mx-auto max-w-xl text-center text-sm leading-relaxed text-ink-500">
-        No single visitor defines the creature. It emerges from hundreds of
-        overlapping experiences and keeps changing all day.
-      </p>
+      {result.silhouette_image_url && (
+        <Frame src={result.silhouette_image_url} />
+      )}
+
+      {result.story && (
+        <p className="mx-auto max-w-xl text-center text-sm leading-relaxed text-ink-200">
+          {result.story}
+        </p>
+      )}
+
+      {result.organ_image_url && (
+        <div className="mx-auto max-w-xs space-y-2">
+          <Frame src={result.organ_image_url} />
+          {result.organs[0] && (
+            <p className="text-center text-[11px] uppercase tracking-[0.2em] text-ink-500">
+              {result.organs[0].part}
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="flex justify-center">
         <Button variant="outline" onClick={onFinished}>
-          See the monster
+          Done
         </Button>
       </div>
     </div>

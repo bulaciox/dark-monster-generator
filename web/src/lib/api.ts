@@ -16,12 +16,24 @@ export type Submission = {
   relation_today: string
 }
 
-export type SubmissionResult = {
-  kind: 'initial' | 'edit' | 'reanchor' | 'absorbed'
-  image_url: string | null
-  previous_image_url: string | null
-  version: number | null
-  iteration: number | null
+export type Organ = {
+  part: string
+  group: string
+  level: number
+  transformation: string
+}
+
+export type Monster = {
+  id: string
+  number: number
+  day: string
+  monster_type: 'human' | 'environmental'
+  organ_image_url: string | null
+  silhouette_image_url: string | null
+  story: string
+  title: string
+  organs: Organ[]
+  identity: Record<string, unknown>
 }
 
 export type Generation = {
@@ -72,10 +84,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   formOptions: () => request<FormOptions>('/api/form'),
   monster: () => request<MonsterState>('/api/monster'),
+  monsters: () => request<Monster[]>('/api/monsters'),
   generations: () => request<Generation[]>('/api/generations'),
   submissions: () => request<Record<string, unknown>[]>('/api/submissions'),
   submit: (submission: Submission) =>
-    request<SubmissionResult>('/api/submissions', {
+    request<Monster>('/api/submissions', {
       method: 'POST',
       body: JSON.stringify(submission),
     }),

@@ -22,6 +22,7 @@ BUCKET = "monsters"
 TABLE = "generations"
 SUBMISSIONS_TABLE = "submissions"
 STATE_TABLE = "monster_state"
+MONSTERS_TABLE = "monsters"
 
 FESTIVAL_TZ = zoneinfo.ZoneInfo("Europe/Copenhagen")
 
@@ -139,3 +140,71 @@ def reset_day(day: str | None = None) -> int:
     new_iteration = (state.get("iteration") or 1) + 1 if state else 1
     upsert_state({}, None, 0, 0, day=day, iteration=new_iteration)
     return new_iteration
+
+
+# ---------------------------------------------------------------------------
+# Individual monsters (one per visitor)
+# ---------------------------------------------------------------------------
+
+def store_image(source_url: str) -> str:
+    """Copy a fal.ai temporary image into Storage and return its public URL.
+
+    Individual monsters are generated once and never edited, so JPEG is safe
+    here: the compounding recompression that forced PNG on the collective path
+    only happens when an image is re-saved on every edit cycle.
+    """
+    response = httpx.get(source_url, follow_redirects=True)
+    content_type = response.headers.get("content-type", "")
+    if not content_type.startswith("image/"):
+        content_type = ("image/png" if source_url.split("?")[0].endswith(".png")
+                        else "image/jpeg")
+    return _upload_to_bucket(response.content, content_type)
+
+
+def next_monster_number(day: str | None = None) -> int:
+    """The respondent number for the next monster, counting up through the day.
+
+    This is the number shown beside the title on the installation screens
+    (21, 33, 45, 57 in the directors' sketches).
+    """
+    rows = _client().table(MONSTERS_TABLE).select(
+        "id", count="exact").eq("day", day or today()).execute()
+    return (rows.count or 0) + 1
+
+
+def save_monster(identity: dict, organs: list[dict], story: str, title: str,
+                 organ_image_url: str | None,
+                 silhouette_image_url: str | None,
+                 submission_id: str | None = None,
+                 day: str | None = None) -> dict:
+    """Record one visitor's monster: identity, organs and the four outputs."""
+    day = day or today()
+    row = _client().table(MONSTERS_TABLE).insert({
+        "submission_id": submission_id,
+        "day": day,
+        "number": next_monster_number(day),
+        "monster_type": identity.get("monster_type", "human"),
+        "identity": identity,
+        "organs": organs,
+        "organ_image_url": organ_image_url,
+        "silhouette_image_url": silhouette_image_url,
+        "story": story,
+        "title": title,
+    }).execute()
+    return row.data[0]
+
+
+def list_monsters(day: str | None = None) -> list[dict]:
+    """Visitors' monsters, newest first; optionally only one day's."""
+    query = _client().table(MONSTERS_TABLE).select("*")
+    if day:
+        query = query.eq("day", day)
+    rows = query.order("created_at", desc=True).execute()
+    return rows.data
+
+
+def get_monster(monster_id: str) -> dict | None:
+    """One monster by id, or None."""
+    rows = _client().table(MONSTERS_TABLE).select("*").eq(
+        "id", monster_id).execute()
+    return rows.data[0] if rows.data else None

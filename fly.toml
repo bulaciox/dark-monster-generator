@@ -15,10 +15,10 @@ primary_region = "arn"
 
   [http_service.concurrency]
     type = "requests"
-    # Submissions are processed one at a time per machine, which also keeps
-    # two simultaneous visitors from editing the same image.
-    hard_limit = 1
-    soft_limit = 1
+    # Each visitor now gets their own monster, generated from scratch, so
+    # simultaneous submissions no longer contend for one shared image.
+    hard_limit = 8
+    soft_limit = 4
 
 [[http_service.checks]]
   grace_period = "20s"

@@ -53,3 +53,27 @@ create table if not exists monster_state (
 );
 
 alter table monster_state add column if not exists iteration int not null default 1;
+
+-- ---------------------------------------------------------------------------
+-- monsters: one row per visitor — their own monster, not the collective one.
+-- Free text becomes `identity` (already transposed, so it never names a real
+-- person, place or event); the selected emotions become `organs`. The four
+-- installation outputs are organ_image_url, silhouette_image_url, story and
+-- title, and `number` is the respondent number shown beside the title.
+-- ---------------------------------------------------------------------------
+create table if not exists monsters (
+    id uuid primary key default gen_random_uuid(),
+    submission_id uuid references submissions (id),
+    day date not null default current_date,
+    number int not null,
+    monster_type text not null default 'human',   -- human | environmental
+    identity jsonb not null default '{}'::jsonb,
+    organs jsonb not null default '[]'::jsonb,
+    organ_image_url text,
+    silhouette_image_url text,
+    story text,
+    title text,
+    created_at timestamptz not null default now()
+);
+
+create index if not exists monsters_day_idx on monsters (day, number);

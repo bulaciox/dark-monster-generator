@@ -1,27 +1,14 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Loader2 } from 'lucide-react'
-import { Lightbox } from '@/components/Lightbox'
-import { api, type Generation } from '@/lib/api'
+import { api, type Monster } from '@/lib/api'
 
 export function Gallery() {
-  const [items, setItems] = useState<Generation[] | null>(null)
+  const [items, setItems] = useState<Monster[] | null>(null)
   const [error, setError] = useState<string | null>(null)
-  // Which day's versions are open in the viewer, and at which image.
-  const [viewing, setViewing] = useState<{ key: string; index: number } | null>(null)
 
   useEffect(() => {
-    api.generations().then(setItems).catch((e) => setError(e.message))
+    api.monsters().then(setItems).catch((e) => setError(e.message))
   }, [])
-
-  // Newest first from the API; group by day + iteration.
-  const groups = useMemo(() => {
-    const map = new Map<string, Generation[]>()
-    for (const item of items ?? []) {
-      const key = `${item.day}__${item.iteration ?? 1}`
-      map.set(key, [...(map.get(key) ?? []), item])
-    }
-    return [...map.entries()]
-  }, [items])
 
   if (error) return <p className="p-10 text-ink-400">{error}</p>
   if (!items)
@@ -33,63 +20,61 @@ export function Gallery() {
   if (!items.length)
     return <p className="p-20 text-center text-ink-500">No monsters yet.</p>
 
-  const open = viewing && groups.find(([key]) => key === viewing.key)
-
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-16 px-6 py-12">
-      {groups.map(([key, versions]) => {
-        const [day, iteration] = key.split('__')
-        return (
-          <section key={key} className="space-y-5">
-            <h3 className="text-xs uppercase tracking-[0.25em] text-ink-500">
-              {day} · Iteration {iteration} · {versions.length} versions
-            </h3>
-
-            {/* The day's final form: prominent but not overwhelming, so the
-                page stays scannable across many days. */}
-            <figure className="space-y-2">
-              <button
-                onClick={() => setViewing({ key, index: 0 })}
-                className="block max-w-md cursor-zoom-in overflow-hidden rounded-sm border border-ink-800 transition-opacity hover:opacity-85"
-              >
+    <div className="mx-auto w-full max-w-5xl space-y-20 px-6 py-12">
+      {items.map((monster) => (
+        <section
+          key={monster.id}
+          className="grid gap-6 sm:grid-cols-[2fr_1fr] sm:items-start"
+        >
+          <div className="space-y-4">
+            {monster.silhouette_image_url && (
+              <div className="overflow-hidden rounded-sm border border-ink-800">
                 <img
-                  src={versions[0].image_url}
-                  alt={`Final form of ${day}`}
+                  src={monster.silhouette_image_url}
+                  alt={monster.title || `Monster ${monster.number}`}
                   className="w-full"
                 />
-              </button>
-              <figcaption className="text-[10px] uppercase tracking-widest text-ink-500">
-                Final form — click to enlarge
-              </figcaption>
-            </figure>
+              </div>
+            )}
+            {monster.story && (
+              <p className="text-sm leading-relaxed text-ink-200">
+                {monster.story}
+              </p>
+            )}
+          </div>
 
-            <div className="grid grid-cols-3 gap-3 sm:grid-cols-6">
-              {versions.map((v, i) => (
-                <figure key={v.id} className="space-y-1">
-                  <button
-                    onClick={() => setViewing({ key, index: i })}
-                    className="block w-full cursor-zoom-in overflow-hidden rounded-sm border border-ink-800 transition-opacity hover:opacity-85"
-                  >
-                    <img src={v.image_url} alt={`Version ${v.version}`} className="w-full" />
-                  </button>
-                  <figcaption className="text-[10px] uppercase tracking-widest text-ink-500">
-                    v{v.version} · {v.kind}
-                  </figcaption>
-                </figure>
-              ))}
+          <div className="space-y-4">
+            <div className="space-y-1">
+              <p className="text-[10px] uppercase tracking-[0.3em] text-ink-500">
+                No. {monster.number} · {monster.day}
+              </p>
+              {monster.title && (
+                <h3 className="font-display text-xl text-ink-50">
+                  {monster.title}
+                </h3>
+              )}
             </div>
-          </section>
-        )
-      })}
 
-      {open && viewing && (
-        <Lightbox
-          items={open[1]}
-          index={viewing.index}
-          onIndexChange={(index) => setViewing({ ...viewing, index })}
-          onClose={() => setViewing(null)}
-        />
-      )}
+            {monster.organ_image_url && (
+              <figure className="space-y-1.5">
+                <div className="overflow-hidden rounded-sm border border-ink-800">
+                  <img
+                    src={monster.organ_image_url}
+                    alt={monster.organs[0]?.part ?? 'Organ'}
+                    className="w-full"
+                  />
+                </div>
+                <figcaption className="text-[10px] uppercase tracking-widest text-ink-500">
+                  {monster.organs
+                    .map((o) => `${o.part} · level ${o.level}`)
+                    .join(' / ')}
+                </figcaption>
+              </figure>
+            )}
+          </div>
+        </section>
+      ))}
     </div>
   )
 }
