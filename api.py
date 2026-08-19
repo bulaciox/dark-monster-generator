@@ -139,9 +139,13 @@ class Monster(BaseModel):
     title: str
     organs: list[dict]
     identity: dict
+    # The answers this monster came from, so the gallery can show them side by
+    # side. Empty for rows saved without a submission.
+    submission: dict
 
     @classmethod
     def from_row(cls, row: dict) -> "Monster":
+        embedded = row.get("submissions") or {}
         return cls(
             id=str(row["id"]),
             number=row.get("number") or 0,
@@ -153,6 +157,7 @@ class Monster(BaseModel):
             title=row.get("title") or "",
             organs=row.get("organs") or [],
             identity=row.get("identity") or {},
+            submission=embedded.get("data") or {},
         )
 
 

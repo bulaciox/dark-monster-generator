@@ -195,8 +195,13 @@ def save_monster(identity: dict, organs: list[dict], story: str, title: str,
 
 
 def list_monsters(day: str | None = None) -> list[dict]:
-    """Visitors' monsters, newest first; optionally only one day's."""
-    query = _client().table(MONSTERS_TABLE).select("*")
+    """Visitors' monsters, newest first; optionally only one day's.
+
+    Each row carries the submission that produced it (embedded through the
+    foreign key), so the gallery can show a monster beside the answers it came
+    from.
+    """
+    query = _client().table(MONSTERS_TABLE).select("*, submissions(data)")
     if day:
         query = query.eq("day", day)
     rows = query.order("created_at", desc=True).execute()
@@ -204,7 +209,7 @@ def list_monsters(day: str | None = None) -> list[dict]:
 
 
 def get_monster(monster_id: str) -> dict | None:
-    """One monster by id, or None."""
-    rows = _client().table(MONSTERS_TABLE).select("*").eq(
-        "id", monster_id).execute()
+    """One monster by id, with its submission embedded, or None."""
+    rows = _client().table(MONSTERS_TABLE).select(
+        "*, submissions(data)").eq("id", monster_id).execute()
     return rows.data[0] if rows.data else None

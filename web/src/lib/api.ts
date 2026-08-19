@@ -34,6 +34,7 @@ export type Monster = {
   title: string
   organs: Organ[]
   identity: Record<string, unknown>
+  submission: Partial<Submission>
 }
 
 export type Generation = {
