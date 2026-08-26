@@ -10,6 +10,7 @@ Run with: uv run uvicorn api:app --reload --port 8000
 import observability  # noqa: F401  (must be first: configures Logfire once)
 
 import base64
+import datetime
 import os
 import secrets
 from pathlib import Path
@@ -19,7 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import Response
+from starlette.responses import FileResponse, Response
 
 from curator import (
     EMOTION_GROUPS,
@@ -297,10 +298,85 @@ def reset(day: str | None = None) -> dict:
     return {"iteration": reset_day(day)}
 
 
+# ---------------------------------------------------------------------------
+# Exhibition screens: three URLs (/screen/story, /screen/monster, /screen/organ)
+# each show part of the monster currently "on stage". A single server-side
+# schedule decides who is on stage so the three screens always agree.
+# ---------------------------------------------------------------------------
+
+# Each monster holds the stage at least this long before the next one in the
+# queue takes over. Chosen by the directors.
+DWELL_SECONDS = 60
+
+
+class Stage(BaseModel):
+    monster: Monster | None
+
+
+def _parse_created(value) -> datetime.datetime:
+    """A monster row's created_at as an aware UTC datetime."""
+    text = str(value or "").replace("Z", "+00:00")
+    try:
+        dt = datetime.datetime.fromisoformat(text)
+    except ValueError:
+        return datetime.datetime.now(datetime.timezone.utc)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=datetime.timezone.utc)
+    return dt
+
+
+def _staged_monster(rows: list[dict]) -> dict | None:
+    """Which monster is on stage now, from its schedule of entry times.
+
+    Given the day's monsters oldest-first with entry times S(i):
+
+        S(0) = t(0)
+        S(i) = max(t(i), S(i-1) + DWELL)
+
+    the one on stage is the last whose entry time has already passed. This
+    gives every monster at least DWELL seconds, plays the queue in order when
+    submissions pile up, and holds the latest once the queue is exhausted —
+    all as a pure function of the creation times and the server clock, so the
+    three screens need no coordination to stay in sync.
+    """
+    if not rows:
+        return None
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    dwell = datetime.timedelta(seconds=DWELL_SECONDS)
+
+    staged = None
+    entry = None
+    for row in rows:
+        created = _parse_created(row.get("created_at"))
+        entry = created if entry is None else max(created, entry + dwell)
+        if entry <= now:
+            staged = row
+        else:
+            break
+    return staged
+
+
+@app.get("/api/stage", response_model=Stage)
+def stage() -> Stage:
+    """The monster the exhibition screens should be showing right now."""
+    rows = list_monsters(day=today())          # newest-first
+    staged = _staged_monster(list(reversed(rows)))  # schedule wants oldest-first
+    return Stage(monster=Monster.from_row(staged) if staged else None)
+
+
 # In production the built React app is served from this same origin, so there
 # is a single URL and the password gate covers the interface too. Mounted last
 # so it never shadows the /api routes. Absent during local development, where
 # Vite serves the frontend instead.
 WEB_DIST = Path(__file__).parent / "web" / "dist"
+
 if WEB_DIST.is_dir():
+    # The exhibition screen URLs are client-side routes, so they have no file of
+    # their own; hand them the SPA and let React read the path. Declared before
+    # the catch-all mount, which would otherwise 404 them.
+    @app.get("/screen/{name}")
+    def screen_page(name: str) -> FileResponse:
+        return FileResponse(WEB_DIST / "index.html")
+
     app.mount("/", StaticFiles(directory=WEB_DIST, html=True), name="web")

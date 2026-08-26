@@ -94,6 +94,7 @@ export const api = {
   monster: () => request<MonsterState>('/api/monster'),
   monsters: () => request<Monster[]>('/api/monsters'),
   generations: () => request<Generation[]>('/api/generations'),
+  stage: () => request<{ monster: Monster | null }>('/api/stage'),
   freeGenerations: () => request<FreeGeneration[]>('/api/free-generations'),
   freeGenerate: (prompt: string) =>
     request<FreeGeneration>('/api/free-generate', {
