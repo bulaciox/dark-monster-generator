@@ -757,6 +757,28 @@ def generate_silhouette(identity: dict, organs: list[dict]) -> str:
         return image_url
 
 
+def free_generate(prompt: str) -> str:
+    """Generate an image from a bare prompt, no style wrapping.
+
+    The prompt is sent exactly as written to MONSTER_MODEL. Uses _generate so
+    content-policy rejections still step down through progressively plainer
+    fallbacks rather than raising immediately.
+
+    Args:
+        prompt: Any text to send to the model.
+
+    Returns:
+        Direct URL to the generated image.
+    """
+    prompt = prompt.strip()
+    if not prompt:
+        raise ValueError("Prompt cannot be empty.")
+    with logfire.span("free generate", model=MONSTER_MODEL, prompt=prompt) as span:
+        image_url = _generate([prompt], "square_hd")
+        span.set_attribute("image_url", image_url)
+        return image_url
+
+
 if __name__ == "__main__":
     url = generate_image("a dark monster in a foggy forest")
     print(url)

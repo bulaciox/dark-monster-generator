@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import { Contribute } from '@/views/Contribute'
 import { Data } from '@/views/Data'
+import { FreeGenerate } from '@/views/FreeGenerate'
 import { Gallery } from '@/views/Gallery'
 import { Monster } from '@/views/Monster'
 import { useMediaQuery } from '@/lib/use-media-query'
 import { cn } from '@/lib/utils'
 
-const VIEWS = ['Contribute', 'Monster', 'Gallery', 'Data'] as const
+const VIEWS = ['Contribute', 'Monster', 'Gallery', 'Free Generate', 'Data'] as const
 type View = (typeof VIEWS)[number]
 
 export default function App() {
@@ -62,6 +63,7 @@ export default function App() {
         )}
         {current === 'Monster' && <Monster />}
         {current === 'Gallery' && <Gallery />}
+        {current === 'Free Generate' && <FreeGenerate />}
         {current === 'Data' && <Data />}
       </main>
     </div>

@@ -77,3 +77,17 @@ create table if not exists monsters (
 );
 
 create index if not exists monsters_day_idx on monsters (day, number);
+
+-- ---------------------------------------------------------------------------
+-- free_generations: images generated from bare prompts in the Free Generate
+-- tab. No processing, no system prompt -- the user's text goes straight to
+-- the model so the style of the generation can be explored freely.
+-- ---------------------------------------------------------------------------
+create table if not exists free_generations (
+    id uuid primary key default gen_random_uuid(),
+    prompt text not null,
+    image_url text not null,
+    created_at timestamptz not null default now()
+);
+
+create index if not exists free_generations_created_idx on free_generations (created_at desc);

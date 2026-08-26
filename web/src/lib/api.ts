@@ -37,6 +37,13 @@ export type Monster = {
   submission: Partial<Submission>
 }
 
+export type FreeGeneration = {
+  id: string
+  prompt: string
+  image_url: string
+  created_at: string
+}
+
 export type Generation = {
   id: string
   prompt: string
@@ -87,6 +94,12 @@ export const api = {
   monster: () => request<MonsterState>('/api/monster'),
   monsters: () => request<Monster[]>('/api/monsters'),
   generations: () => request<Generation[]>('/api/generations'),
+  freeGenerations: () => request<FreeGeneration[]>('/api/free-generations'),
+  freeGenerate: (prompt: string) =>
+    request<FreeGeneration>('/api/free-generate', {
+      method: 'POST',
+      body: JSON.stringify({ prompt }),
+    }),
   submissions: () => request<Record<string, unknown>[]>('/api/submissions'),
   submit: (submission: Submission) =>
     request<Monster>('/api/submissions', {

@@ -27,15 +27,18 @@ from curator import (
     RESPONSE_POSTURES,
     genome_summary,
 )
-from generator import STYLE_TEMPLATES
+from generator import STYLE_TEMPLATES, free_generate
 from pipeline import process_submission
 from storage import (
     get_monster,
     get_state,
+    list_free_generations,
     list_generations,
     list_monsters,
     list_submissions,
     reset_day,
+    save_free_generation,
+    store_image,
     today,
 )
 
@@ -234,6 +237,58 @@ def monster_by_id(monster_id: str) -> Monster:
     if not row:
         raise HTTPException(status_code=404, detail="No such monster.")
     return Monster.from_row(row)
+
+
+class FreeGenerationRequest(BaseModel):
+    prompt: str = Field(min_length=1, max_length=2000)
+
+
+class FreeGeneration(BaseModel):
+    id: str
+    prompt: str
+    image_url: str
+    created_at: str
+
+
+@app.post("/api/free-generate", response_model=FreeGeneration)
+def create_free_generation(req: FreeGenerationRequest) -> FreeGeneration:
+    """Generate an image from a bare prompt and save it.
+
+    The prompt is sent to FLUX.2 pro exactly as written — no system prompt,
+    no style wrapping. Useful for exploring what the model can do before
+    committing to a house style.
+    """
+    try:
+        raw_url = free_generate(req.prompt)
+        image_url = store_image(raw_url)
+    except Exception as exc:
+        detail = (
+            "The prompt was flagged by the content checker. Try rephrasing it."
+            if "content_policy_violation" in str(exc)
+            else str(exc)
+        )
+        raise HTTPException(status_code=502, detail=detail) from exc
+    row = save_free_generation(req.prompt, image_url)
+    return FreeGeneration(
+        id=str(row["id"]),
+        prompt=row["prompt"],
+        image_url=row["image_url"],
+        created_at=str(row["created_at"]),
+    )
+
+
+@app.get("/api/free-generations", response_model=list[FreeGeneration])
+def get_free_generations() -> list[FreeGeneration]:
+    """All free generations, newest first."""
+    return [
+        FreeGeneration(
+            id=str(r["id"]),
+            prompt=r["prompt"],
+            image_url=r["image_url"],
+            created_at=str(r["created_at"]),
+        )
+        for r in list_free_generations()
+    ]
 
 
 @app.post("/api/reset")

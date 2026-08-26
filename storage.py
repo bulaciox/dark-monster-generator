@@ -22,6 +22,7 @@ BUCKET = "monsters"
 TABLE = "generations"
 SUBMISSIONS_TABLE = "submissions"
 STATE_TABLE = "monster_state"
+FREE_GENERATIONS_TABLE = "free_generations"
 MONSTERS_TABLE = "monsters"
 
 FESTIVAL_TZ = zoneinfo.ZoneInfo("Europe/Copenhagen")
@@ -213,3 +214,21 @@ def get_monster(monster_id: str) -> dict | None:
     rows = _client().table(MONSTERS_TABLE).select(
         "*, submissions(data)").eq("id", monster_id).execute()
     return rows.data[0] if rows.data else None
+
+
+# ---------------------------------------------------------------------------
+# Free generations (bare prompt → image, no wrapping)
+# ---------------------------------------------------------------------------
+
+def save_free_generation(prompt: str, image_url: str) -> dict:
+    """Record one free generation."""
+    row = _client().table(FREE_GENERATIONS_TABLE).insert(
+        {"prompt": prompt, "image_url": image_url}).execute()
+    return row.data[0]
+
+
+def list_free_generations() -> list[dict]:
+    """All free generations, newest first."""
+    rows = (_client().table(FREE_GENERATIONS_TABLE)
+            .select("*").order("created_at", desc=True).execute())
+    return rows.data
