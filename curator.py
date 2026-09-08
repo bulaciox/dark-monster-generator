@@ -1068,13 +1068,15 @@ def build_story_and_title(sub: dict, identity: dict) -> dict:
     prompt = (
         "A visitor's encounter with their monster:\n\n" + "\n".join(parts) +
         "\n\nWrite two things and reply with ONLY a JSON object:\n"
-        '  "story": 40-70 words. One scene from a tale, in the third person, '
-        "in which the visitor is the main character meeting this monster. "
-        "Dramatise their response into the register of myth or fable -- "
-        "running, breaking free, standing up, striking back, forgiving, "
-        "enduring. Any real person becomes an archetype (a mentor, an oracle, "
-        "a gatekeeper, a shadow), never a father, teacher, manager or "
-        "partner. Name no real place or event.\n"
+        '  "story": 40-70 words. Write one scene from a tale, in the third '
+        "person, in which the visitor is the main character meeting this "
+        "monster. Give the scene the narrative structure and symbolic "
+        "quality of myth or fable: the character may run, break free, "
+        "stand up, strike back, forgive or endure. But keep the writing "
+        "straightforward and colloquial. Avoid the elevated, poetic or "
+        "archaic language of classical myth. Any real person becomes an "
+        "archetype (a mentor, an oracle, a gatekeeper, a shadow), never a "
+        "father, teacher, manager or partner. Name no real place or event.\n"
         '  "title": 2-6 words. A line about where they stand NOW, spoken as '
         "if the tale had a caption. It may be a statement or a question. In "
         'the register of: "I retire in peace", "It\'s alright to run", '

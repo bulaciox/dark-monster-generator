@@ -60,7 +60,7 @@ export function Screen({ kind }: { kind: ScreenKind }) {
         {monster ? (
           <Content kind={kind} monster={monster} />
         ) : (
-        <p className="text-sm uppercase tracking-[0.4em] text-ink-700">No monster generated today</p>
+        <p className="text-[clamp(0.75rem,2vw,1.5rem)] uppercase tracking-[0.4em] text-ink-700">No monster generated today</p>
         )}
       </div>
     </div>
@@ -69,29 +69,13 @@ export function Screen({ kind }: { kind: ScreenKind }) {
 
 function Content({ kind, monster }: { kind: ScreenKind; monster: Monster }) {
   if (kind === 'story') {
-    return (
-      <div className="mx-auto max-w-4xl space-y-10 px-16 text-center">
-        <p className="text-sm uppercase tracking-[0.4em] text-ink-600">
-          No. {monster.number}
-        </p>
-        {monster.title && (
-          <h1 className="font-display text-5xl leading-tight text-ink-50 lg:text-6xl">
-            {monster.title}
-          </h1>
-        )}
-        {monster.story && (
-          <p className="text-xl leading-relaxed text-ink-200 lg:text-2xl">
-            {monster.story}
-          </p>
-        )}
-      </div>
-    )
+    return <StoryContent monster={monster} />
   }
 
   const url = imageFor(kind, monster)
   if (!url) {
     return (
-      <p className="text-sm uppercase tracking-[0.4em] text-ink-700">
+      <p className="text-[clamp(0.75rem,2vw,1.5rem)] uppercase tracking-[0.4em] text-ink-700">
         No {kind} image
       </p>
     )
@@ -100,9 +84,89 @@ function Content({ kind, monster }: { kind: ScreenKind; monster: Monster }) {
     <img
       src={url}
       alt={kind}
-      className="max-h-full max-w-full object-contain"
+      className="h-full w-full object-contain"
     />
   )
+}
+
+// Sizes the story block (number + title + story) as large as possible while
+// always fitting the available screen, whatever its size/aspect ratio and
+// however long a given story is. All three lines share one `em`-relative
+// font-size, which a binary search grows/shrinks until the block's real,
+// re-wrapped layout (at the container's actual width) just fits vertically
+// and horizontally -- so long screens/short stories get genuinely bigger
+// text instead of empty space, and long stories never overflow.
+function StoryContent({ monster }: { monster: Monster }) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
+  const fontSize = useFitFontSize(containerRef, contentRef, [monster.id])
+
+  return (
+    <div ref={containerRef} className="flex h-full w-full items-center justify-center overflow-hidden px-[4vw] py-[4vh]">
+      <div
+        ref={contentRef}
+        className="flex w-full flex-col items-center gap-[0.5em] text-center"
+        style={{ fontSize: `${fontSize}px` }}
+      >
+        <p className="whitespace-nowrap text-[0.28em] uppercase tracking-[0.4em] text-ink-600">
+          No. {monster.number}
+        </p>
+        {monster.title && (
+          <h1 className="font-display text-[1em] leading-tight text-ink-50">{monster.title}</h1>
+        )}
+        {monster.story && (
+          <p className="text-[0.42em] leading-relaxed text-ink-200">{monster.story}</p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function useFitFontSize(
+  containerRef: React.RefObject<HTMLElement | null>,
+  contentRef: React.RefObject<HTMLElement | null>,
+  deps: unknown[],
+): number {
+  const [fontSize, setFontSize] = useState(16)
+
+  useEffect(() => {
+    const container = containerRef.current
+    const content = contentRef.current
+    if (!container || !content) return
+
+    function fits(px: number) {
+      content!.style.fontSize = `${px}px`
+      return (
+        content!.scrollHeight <= container!.clientHeight &&
+        content!.scrollWidth <= container!.clientWidth
+      )
+    }
+
+    function recompute() {
+      if (!container || !content) return
+      let lo = 8
+      let hi = 500
+      for (let i = 0; i < 20; i++) {
+        const mid = (lo + hi) / 2
+        if (fits(mid)) lo = mid
+        else hi = mid
+      }
+      content.style.fontSize = ''
+      setFontSize(lo)
+    }
+
+    recompute()
+    const ro = new ResizeObserver(recompute)
+    ro.observe(container)
+    window.addEventListener('resize', recompute)
+    return () => {
+      ro.disconnect()
+      window.removeEventListener('resize', recompute)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps)
+
+  return fontSize
 }
 
 function imageFor(kind: ScreenKind, monster: Monster): string | null {
