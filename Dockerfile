@@ -20,6 +20,7 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
 COPY *.py ./
+COPY prompts/ ./prompts/
 COPY --from=web /web/dist ./web/dist
 
 ENV PATH="/app/.venv/bin:$PATH" \

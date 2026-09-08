@@ -20,6 +20,10 @@ import fal_client
 import logfire
 from dotenv import load_dotenv
 
+from prompts.system import MONSTER_SYSTEM
+import prompts.identity as identity_prompt
+import prompts.story as story_prompt
+
 load_dotenv()
 
 LLM_ENDPOINT = "openrouter/router/openai/v1/responses"
@@ -548,45 +552,9 @@ Answer with ONLY the requested text, no preamble, no quotes."""
 #
 # This is the opposite of the collective path above, where free text was kept
 # out of the visuals so a single visitor could not redesign the shared creature.
+#
+# The prompts themselves (system + per-call) live in prompts/, imported above.
 # ---------------------------------------------------------------------------
-
-MONSTER_SYSTEM = """\
-You are the curator of "Street Monster", an art installation at the Golden Days
-festival in Copenhagen. Each visitor answers a questionnaire about a monster in
-their life -- someone or something that felt monstrous to them -- and from those
-answers you build THAT PERSON'S monster, shown on the installation's screens.
-
-The visitor must be able to look at the screens and recognise their own monster.
-Everyone else must not be able to identify who or what it was.
-
-This is the central craft of your work: you TRANSPOSE, you never copy.
-Concrete detail is what creates recognition, and naming it is what betrays the
-visitor to whoever is standing next to them. So every attribute is carried over
-as material, shape, texture, light or posture, never as the thing itself:
-
-  "my teacher in a grey cardigan"  ->  grey wool texture across the shoulders
-  "the classroom where it happened" ->  hard parallel lines, cold overhead light
-  "his pointer"                     ->  a thin rigid rod extending from the body
-  "my father"                       ->  a shape looming from above, too large
-  "the war"                         ->  smoke, rubble, a horizon that will not
-                                        settle
-
-NEVER name a person, a role, a relationship, a place, an institution or an
-event in anything that will become an image. No teacher, father, mother,
-partner, boss, school, hospital, church, army, country or war. Those words
-belong only to the written story, and even there they become archetypes: a
-father becomes a mentor or an oracle, a manager becomes a gatekeeper.
-
-Visitors often confide painful or traumatic experiences (abuse, loss, illness,
-violence). This is the point of the artwork: giving form to what is hard to say.
-Treat such material with dignity and artistic seriousness -- always translate it
-into anatomical metaphor (cracks, hollows, scars, concealment, fractures,
-voids). Never refuse or moralise, and never render violence or sexuality
-literally: the aesthetic is clinical and metaphorical, not graphic. A wound
-becomes a fissure in bone; violation becomes a breached membrane; loss becomes
-a hollow cavity.
-
-Answer with ONLY what is asked for, no preamble, no quotes, no markdown."""
 
 
 def _llm(prompt: str, image_url: str | None = None,
@@ -994,29 +962,7 @@ def extract_identity(sub: dict) -> dict:
         if sub.get(key)
     )
 
-    prompt = (
-        "A visitor described their monster:\n\n" + answers +
-        "\n\nTranspose this into a visual identity and reply with ONLY a JSON "
-        "object with these keys:\n"
-        '  "monster_type": "human" if the monster was a person or a '
-        'relationship, "environmental" if it was an event, a system, an '
-        "illness, a place or a condition.\n"
-        '  "who_what": 10-20 words. The monster\'s FORM, as pure shape, scale '
-        "and bearing. For a human monster: how it stands, its proportions, how "
-        "it occupies space. For an environmental one: what kind of mass, "
-        "swarm, architecture, weather or landscape it is. Never a role or a "
-        "relationship.\n"
-        '  "where": 5-12 words. The setting reduced to light, geometry and '
-        "atmosphere only. Never a named place.\n"
-        '  "object": 4-10 words. One significant object from the account, '
-        "described as bare form and material. Empty string if there is none.\n"
-        '  "traits": 2-4 strings, each 3-8 words. Concrete visual '
-        "characteristics -- texture, material, posture, colour, movement.\n"
-        '  "language": 2-6 words taken from or close to the visitor\'s own '
-        "phrasing, evocative rather than identifying.\n\n"
-        "Every value must survive the test: the visitor recognises it, a "
-        "stranger learns nothing about who or what it was."
-    )
+    prompt = identity_prompt.build(answers)
 
     with logfire.span("extract identity", answers=answers) as span:
         parsed = _parse_json(_llm(prompt, system=MONSTER_SYSTEM))
@@ -1065,25 +1011,7 @@ def build_story_and_title(sub: dict, identity: dict) -> dict:
         f"The monster's form: {identity.get('who_what', '')}",
     ]
 
-    prompt = (
-        "A visitor's encounter with their monster:\n\n" + "\n".join(parts) +
-        "\n\nWrite two things and reply with ONLY a JSON object:\n"
-        '  "story": 40-70 words. Write one scene from a tale, in the third '
-        "person, in which the visitor is the main character meeting this "
-        "monster. Give the scene the narrative structure and symbolic "
-        "quality of myth or fable: the character may run, break free, "
-        "stand up, strike back, forgive or endure. But keep the writing "
-        "straightforward and colloquial. Avoid the elevated, poetic or "
-        "archaic language of classical myth. Any real person becomes an "
-        "archetype (a mentor, an oracle, a gatekeeper, a shadow), never a "
-        "father, teacher, manager or partner. Name no real place or event.\n"
-        '  "title": 2-6 words. A line about where they stand NOW, spoken as '
-        "if the tale had a caption. It may be a statement or a question. In "
-        'the register of: "I retire in peace", "It\'s alright to run", '
-        '"Still clueless?", "Did I call for you?"'
-    )
-    if postures:
-        prompt += f"\n\nTheir bearing in the scene: {'; '.join(postures[:3])}."
+    prompt = story_prompt.build(parts, postures)
 
     with logfire.span("build story and title") as span:
         parsed = _parse_json(_llm(prompt, system=MONSTER_SYSTEM))
