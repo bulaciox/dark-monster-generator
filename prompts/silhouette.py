@@ -1,8 +1,8 @@
-"""Image prompt for the monster screen: a full figure with its organ(s)
-burning inside it. See generator.generate_silhouette.
-"""
+"""Image prompt for the monster screen: the figure alone.
 
-from prompts.organ import anatomical
+The organ is deliberately absent -- the organ screen already carries it.
+See generator.generate_silhouette.
+"""
 
 # The two kinds of monster the test interviews produced. Roughly two thirds of
 # respondents named a person, one third an event or a system -- and a war should
@@ -26,17 +26,6 @@ FIGURE_TEMPLATES = {
 TEMPLATE = (
     "{figure} "
     "{attributes}"
-    "Deep inside it, {organs} — luminous deep red, burning through the "
-    "darkness as the only clear element in the image. "
-    "Analog film photograph, heavy grain, near-black palette with a single red "
-    "accent, cold and documentary. No text, no lettering, no faces in focus."
+    "Analog film photograph, heavy grain, near-black palette, cold and "
+    "documentary. No text, no lettering, no faces in focus."
 )
-
-
-def organ_phrase(organs: list[dict]) -> str:
-    """The organs as they should read inside the silhouette."""
-    if not organs:
-        return "a single anatomical form"
-    pieces = [f"{anatomical(o['part'])}, {o['transformation']}"
-              for o in organs]
-    return " and ".join(pieces)

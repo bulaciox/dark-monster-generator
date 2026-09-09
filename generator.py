@@ -13,7 +13,6 @@ from prompts.organ import TEMPLATE as ORGAN_TEMPLATE, anatomical as _anatomical
 from prompts.silhouette import (
     FIGURE_TEMPLATES,
     TEMPLATE as SILHOUETTE_TEMPLATE,
-    organ_phrase as _organ_phrase,
 )
 
 load_dotenv()
@@ -655,16 +654,15 @@ def generate_organ(part: str, transformation: str) -> str:
         return image_url
 
 
-def generate_silhouette(identity: dict, organs: list[dict]) -> str:
+def generate_silhouette(identity: dict) -> str:
     """The visitor's monster as a whole — the large screen.
 
     The identity package supplies WHO it is (already transposed into shape,
-    texture and light by the curator, never naming anyone), and the organs
-    supply what the emotions did to it.
+    texture and light by the curator, never naming anyone). The organs are
+    deliberately not shown here: the organ screen already carries them.
 
     Args:
         identity: Output of curator.extract_identity.
-        organs: Output of curator.select_organs.
 
     Returns:
         Direct URL to the generated image.
@@ -684,24 +682,15 @@ def generate_silhouette(identity: dict, organs: list[dict]) -> str:
     if identity.get("where"):
         attributes += f"Behind it: {identity['where'].strip()}. "
 
-    organ_phrase = _organ_phrase(organs)
-    # Just the body parts, with the transformations that carry the charged
-    # language dropped.
-    plain_organs = (" and ".join(_anatomical(o["part"]) for o in organs)
-                    or "a single anatomical form")
-
     with logfire.span("generate silhouette", model=MONSTER_MODEL,
-                      monster_type=monster_type, identity=identity,
-                      organs=organs) as span:
+                      monster_type=monster_type, identity=identity) as span:
         image_url = _generate([
-            SILHOUETTE_TEMPLATE.format(figure=figure, attributes=attributes,
-                                       organs=organ_phrase),
-            # Drop the visitor's own material, keep the anatomy.
-            SILHOUETTE_TEMPLATE.format(figure=bare_figure, attributes="",
-                                       organs=organ_phrase),
-            # Drop the transformations too: a figure and its organ, nothing more.
-            SILHOUETTE_TEMPLATE.format(figure=bare_figure, attributes="",
-                                       organs=plain_organs),
+            SILHOUETTE_TEMPLATE.format(figure=figure, attributes=attributes),
+            # Drop the visitor's own material, which is where the language the
+            # prompt checker reads as violent usually sits.
+            SILHOUETTE_TEMPLATE.format(figure=figure, attributes=""),
+            # Just the figure, nothing particular to this visitor.
+            SILHOUETTE_TEMPLATE.format(figure=bare_figure, attributes=""),
         # 9:16 to fill the portrait (rotated 1080x1920) monster monitor.
         ], {"width": 720, "height": 1280})
         span.set_attribute("image_url", image_url)

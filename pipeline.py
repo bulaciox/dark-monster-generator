@@ -88,7 +88,7 @@ def _process_submission(sub: dict) -> tuple[dict, str]:
     # one rather than for their sum.
     with futures.ThreadPoolExecutor(max_workers=3) as pool:
         organ_job = pool.submit(_organ_image, organs)
-        silhouette_job = pool.submit(_silhouette_image, identity, organs)
+        silhouette_job = pool.submit(_silhouette_image, identity)
         text_job = pool.submit(_story_and_title, sub, identity)
 
         organ_url = organ_job.result()
@@ -130,8 +130,8 @@ def _organ_image(organs: list[dict]) -> str | None:
         "organ generation")
 
 
-def _silhouette_image(identity: dict, organs: list[dict]) -> str | None:
-    return _retry(lambda: store_image(generate_silhouette(identity, organs)),
+def _silhouette_image(identity: dict) -> str | None:
+    return _retry(lambda: store_image(generate_silhouette(identity)),
                   "silhouette generation")
 
 

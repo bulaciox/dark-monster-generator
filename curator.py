@@ -15,6 +15,7 @@ a deterministic fallback so the installation keeps working if the call fails.
 """
 
 import json
+import math
 
 import fal_client
 import logfire
@@ -307,9 +308,9 @@ def select_organs(sub: dict) -> list[dict]:
 
     Follows the directors' mapping document: each emotion group owns three body
     parts read as levels of intensity (1 mild, 3 most serious). The level comes
-    from how many emotions of that group were ticked, scaled by how the visitor
-    relates to the experience today -- an unresolved wound pushes the anatomy
-    further than one that has been made peace with.
+    from how much of the visitor's emotional answer belongs to that group,
+    scaled by how they relate to the experience today -- an unresolved wound
+    pushes the anatomy further than one that has been made peace with.
 
     Returns at most MAX_ORGANS entries, strongest group first, each shaped as
     {"part", "group", "level", "transformation"}.
@@ -324,6 +325,7 @@ def select_organs(sub: dict) -> list[dict]:
         group = group_of(emotion)
         if group:
             counts[group] = counts.get(group, 0) + 1
+    total = sum(counts.values())
 
     organs = []
     ranked = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)
@@ -331,9 +333,15 @@ def select_organs(sub: dict) -> list[dict]:
         parts = GROUP_BODY_PARTS.get(group)
         if not parts:
             continue
-        # 1 emotion -> level 1, 2 -> level 2, 3+ -> level 3, then modulated by
-        # today's relation to the experience and clamped to the parts we have.
-        level = max(1, min(len(parts), round(count * intensity)))
+        # How concentrated the visitor's answer is on this group, spread across
+        # the parts it owns: someone who ticked only fear emotions is more
+        # purely fearful than someone who ticked one fear plus two others, so
+        # their anatomy is pushed further. Counting ticks instead put 57% of
+        # everyone on level 1, which made the level-1 part of the most-ticked
+        # group (Fear) the same organ again and again.
+        share = count / total
+        level = max(1, min(len(parts),
+                           math.ceil(share * intensity * len(parts))))
         part = parts[level - 1]
         if any(o["part"] == part for o in organs):
             # Groups deliberately share body parts (the mapping document repeats
