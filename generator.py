@@ -598,7 +598,7 @@ def _flagged(exc: Exception) -> bool:
     return "content_policy_violation" in str(exc)
 
 
-def _generate(prompts: list[str], image_size: str) -> str:
+def _generate(prompts: list[str], image_size: str | dict) -> str:
     """Generate an image, stepping down to plainer wording if one is flagged.
 
     The prompt checker runs before generation, so safety_tolerance -- which
@@ -649,7 +649,8 @@ def generate_organ(part: str, transformation: str) -> str:
             # which body part this visitor's emotions claimed.
             ORGAN_TEMPLATE.format(part=anatomical,
                                   transformation="anatomically altered"),
-        ], "square_hd")
+        # 16:9 to fill the landscape 1920x1080 organ monitor edge to edge.
+        ], {"width": 1280, "height": 720})
         span.set_attribute("image_url", image_url)
         return image_url
 
@@ -701,7 +702,8 @@ def generate_silhouette(identity: dict, organs: list[dict]) -> str:
             # Drop the transformations too: a figure and its organ, nothing more.
             SILHOUETTE_TEMPLATE.format(figure=bare_figure, attributes="",
                                        organs=plain_organs),
-        ], "portrait_4_3")
+        # 9:16 to fill the portrait (rotated 1080x1920) monster monitor.
+        ], {"width": 720, "height": 1280})
         span.set_attribute("image_url", image_url)
         return image_url
 
