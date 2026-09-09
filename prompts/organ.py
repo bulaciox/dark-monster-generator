@@ -1,15 +1,16 @@
-"""Image prompt for the organ screen: a single body part alone on black,
-rendered as a luminous anatomical study. See generator.generate_organ.
+"""Image prompt for the organ screen: one body part, found half-buried in the
+visitor's own environment -- close, tilted, weathered. See
+generator.generate_organ.
 """
 
 TEMPLATE = (
-    "A single anatomical specimen isolated on a pure black background: "
-    "{part}, {transformation}. "
-    "Rendered as a luminous deep-red anatomical study, fine crimson linework "
-    "over translucent tissue that glows from within, the whole form floating "
-    "in darkness with nothing else in the frame. Clinical medical-atlas "
-    "precision with a wet organic sheen, faint analog film grain. "
-    "No text, no labels, no measurement marks, no background detail."
+    "Looking down at a steep, unsettling angle into a mound of dark broken "
+    "earth that fills almost the entire frame: {part}, {transformation}, "
+    "half-sunk in the clumped soil, its surface dusted and streaked with "
+    "earth. {where}"
+    "Analog film photograph, heavy grain, near-black palette, cold and "
+    "documentary, like a found photograph rather than a portrait. No text, "
+    "no labels, no measurement marks."
 )
 
 # A few body parts from the emotion mapping read as sexual anatomy to the image

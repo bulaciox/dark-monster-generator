@@ -628,10 +628,12 @@ def _generate(prompts: list[str], image_size: str | dict) -> str:
     raise RuntimeError("unreachable")  # pragma: no cover
 
 
-def generate_organ(part: str, transformation: str) -> str:
-    """One body part alone, red on black — the organ screen.
+def generate_organ(identity: dict, part: str, transformation: str) -> str:
+    """One body part, half-buried in the visitor's own setting — the organ screen.
 
     Args:
+        identity: Output of curator.extract_identity, for the shared setting
+            ("where") that ties this screen to the silhouette's environment.
         part: Body part from the emotion mapping, e.g. "Heart".
         transformation: How this emotion group deforms it.
 
@@ -639,15 +641,22 @@ def generate_organ(part: str, transformation: str) -> str:
         Direct URL to the generated image.
     """
     anatomical = _anatomical(part)
+    where = identity.get("where", "") or ""
+    where_clause = f"{where.strip()}. " if where.strip() else ""
     with logfire.span("generate organ", model=MONSTER_MODEL, part=part,
                       transformation=transformation) as span:
         image_url = _generate([
-            ORGAN_TEMPLATE.format(part=anatomical,
-                                  transformation=transformation),
+            ORGAN_TEMPLATE.format(part=anatomical, transformation=transformation,
+                                  where=where_clause),
             # Without the transformation the organ says less, but it still says
             # which body part this visitor's emotions claimed.
             ORGAN_TEMPLATE.format(part=anatomical,
-                                  transformation="anatomically altered"),
+                                  transformation="anatomically altered",
+                                  where=where_clause),
+            # Drop the shared setting too, in case that phrase is what's flagged.
+            ORGAN_TEMPLATE.format(part=anatomical,
+                                  transformation="anatomically altered",
+                                  where=""),
         # 16:9 to fill the landscape 1920x1080 organ monitor edge to edge.
         ], {"width": 1280, "height": 720})
         span.set_attribute("image_url", image_url)

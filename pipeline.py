@@ -87,7 +87,7 @@ def _process_submission(sub: dict) -> tuple[dict, str]:
     # The three outputs are independent, so the visitor waits for the slowest
     # one rather than for their sum.
     with futures.ThreadPoolExecutor(max_workers=3) as pool:
-        organ_job = pool.submit(_organ_image, organs)
+        organ_job = pool.submit(_organ_image, identity, organs)
         silhouette_job = pool.submit(_silhouette_image, identity)
         text_job = pool.submit(_story_and_title, sub, identity)
 
@@ -120,12 +120,12 @@ def _retry(call, what: str):
     return None
 
 
-def _organ_image(organs: list[dict]) -> str | None:
+def _organ_image(identity: dict, organs: list[dict]) -> str | None:
     if not organs:
         return None
     organ = organs[0]
     return _retry(
-        lambda: store_image(generate_organ(organ["part"],
+        lambda: store_image(generate_organ(identity, organ["part"],
                                            organ["transformation"])),
         "organ generation")
 
