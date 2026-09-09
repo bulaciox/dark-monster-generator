@@ -312,60 +312,19 @@ function Result({
   onFinished: () => void
 }) {
   return (
-    <div className="mx-auto w-full max-w-3xl space-y-10 px-6 py-12">
-      <div className="space-y-2 text-center">
-        <p className="text-xs uppercase tracking-[0.3em] text-ink-500">
-          No. {result.number}
+    <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col items-center justify-center gap-8 px-6 py-12 text-center">
+      <div className="space-y-3">
+        <p className="text-xs uppercase tracking-[0.3em] text-ink-500">Your monster</p>
+        <p className="font-display text-6xl text-ink-50 sm:text-7xl">No. {result.number}</p>
+        <p className="max-w-xs text-sm leading-relaxed text-ink-400">
+          Look for your number on the installation's screens.
         </p>
-        {result.title && (
-          <h2 className="font-display text-3xl text-ink-50 sm:text-4xl">
-            {result.title}
-          </h2>
-        )}
       </div>
 
-      {result.silhouette_image_url && (
-        <Frame src={result.silhouette_image_url} />
-      )}
-
-      {result.story && (
-        <p className="mx-auto max-w-xl text-center text-sm leading-relaxed text-ink-200">
-          {result.story}
-        </p>
-      )}
-
-      {result.organ_image_url && (
-        <div className="mx-auto max-w-xs space-y-2">
-          <Frame src={result.organ_image_url} />
-          {result.organs[0] && (
-            <p className="text-center text-[11px] uppercase tracking-[0.2em] text-ink-500">
-              {result.organs[0].part}
-            </p>
-          )}
-        </div>
-      )}
-
-      <div className="flex justify-center">
-        <Button variant="outline" onClick={onFinished}>
-          Done
-        </Button>
-      </div>
+      <Button variant="outline" onClick={onFinished}>
+        Done
+      </Button>
     </div>
-  )
-}
-
-function Frame({ src, caption }: { src: string; caption?: string }) {
-  return (
-    <figure className="space-y-2">
-      <div className="relative overflow-hidden rounded-sm border border-ink-800">
-        <img src={src} alt={caption ?? 'The monster'} className="w-full" />
-      </div>
-      {caption && (
-        <figcaption className="text-center text-xs uppercase tracking-[0.2em] text-ink-500">
-          {caption}
-        </figcaption>
-      )}
-    </figure>
   )
 }
 
