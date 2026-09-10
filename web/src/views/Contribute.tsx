@@ -317,7 +317,7 @@ function Result({
         <p className="text-xs uppercase tracking-[0.3em] text-ink-500">Your monster</p>
         <p className="font-display text-6xl text-ink-50 sm:text-7xl">No. {result.number}</p>
         <p className="max-w-xs text-sm leading-relaxed text-ink-400">
-          Your monster will appear on the screens shortly.
+          Look for your number on the installation's screens.
         </p>
       </div>
 
