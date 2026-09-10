@@ -60,7 +60,7 @@ export function Screen({ kind }: { kind: ScreenKind }) {
         {monster ? (
           <Content kind={kind} monster={monster} />
         ) : (
-        <p className="text-[clamp(0.75rem,2vw,1.5rem)] uppercase tracking-[0.4em] text-ink-700">No monster generated today</p>
+        <p className="text-[clamp(0.75rem,2vw,1.5rem)] uppercase tracking-[0.4em] text-white">No monster generated today</p>
         )}
       </div>
     </div>
