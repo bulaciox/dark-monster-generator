@@ -4,68 +4,30 @@ import { Data } from '@/views/Data'
 import { FreeGenerate } from '@/views/FreeGenerate'
 import { Gallery } from '@/views/Gallery'
 import { Monster } from '@/views/Monster'
-import { useMediaQuery } from '@/lib/use-media-query'
-import { cn } from '@/lib/utils'
 
-const VIEWS = ['Contribute', 'Monster', 'Gallery', 'Free Generate', 'Data'] as const
-type View = (typeof VIEWS)[number]
+// The public questionnaire kiosk has no navigation: visitors only ever see
+// Contribute, on any screen size. The curation/admin views still exist --
+// they're just not linked from anywhere anymore. Reach them by typing their
+// path directly (matching the /screen/{name} pattern used for the exhibition
+// screens); api.py serves the SPA for these paths too.
+const PATH_VIEWS: Record<string, 'Monster' | 'Gallery' | 'Free Generate' | 'Data'> = {
+  '/monster': 'Monster',
+  '/gallery': 'Gallery',
+  '/free-generate': 'Free Generate',
+  '/data': 'Data',
+}
 
 export default function App() {
-  const [view, setView] = useState<View>('Contribute')
-  // Remounts Contribute so a second visitor starts from a blank questionnaire.
+  const [pathView] = useState(() => PATH_VIEWS[window.location.pathname])
+  // Remounts Contribute so the next visitor starts from a blank questionnaire.
   const [runId, setRunId] = useState(0)
-  // Visitors answer on their phone, so mobile is the questionnaire and
-  // nothing else — the other views are a desktop/curation surface.
-  const isDesktop = useMediaQuery('(min-width: 768px)')
-  const current: View = isDesktop ? view : 'Contribute'
+
+  if (pathView === 'Monster') return <Monster />
+  if (pathView === 'Gallery') return <Gallery />
+  if (pathView === 'Free Generate') return <FreeGenerate />
+  if (pathView === 'Data') return <Data />
 
   return (
-    <div className="min-h-dvh">
-      {/* Visitors fill the questionnaire on their phone, so on mobile the app
-          is the form and nothing else: no navigation, no other views. */}
-      <header className="sticky top-0 z-10 hidden border-b border-ink-800 bg-ink-950/85 backdrop-blur md:block">
-        <div className="mx-auto flex w-full max-w-5xl items-center justify-between gap-6 px-6 py-4">
-          <h1 className="font-display text-lg tracking-wide text-ink-50">
-            Street Monster
-          </h1>
-          <nav className="flex gap-1">
-            {VIEWS.map((v) => (
-              <button
-                key={v}
-                onClick={() => {
-                  if (v === 'Contribute') setRunId((r) => r + 1)
-                  setView(v)
-                }}
-                className={cn(
-                  'rounded-sm px-3 py-1.5 text-xs uppercase tracking-[0.15em] transition-colors',
-                  current === v
-                    ? 'bg-ink-800 text-ink-50'
-                    : 'text-ink-500 hover:text-ink-300',
-                )}
-              >
-                {v}
-              </button>
-            ))}
-          </nav>
-        </div>
-      </header>
-
-      <main>
-        {current === 'Contribute' && (
-          <Contribute
-            key={runId}
-            // On mobile there is nowhere else to go, so finishing starts a
-            // fresh questionnaire for the next visitor.
-            onFinished={() =>
-              isDesktop ? setView('Monster') : setRunId((r) => r + 1)
-            }
-          />
-        )}
-        {current === 'Monster' && <Monster />}
-        {current === 'Gallery' && <Gallery />}
-        {current === 'Free Generate' && <FreeGenerate />}
-        {current === 'Data' && <Data />}
-      </main>
-    </div>
+    <Contribute key={runId} onFinished={() => setRunId((r) => r + 1)} />
   )
 }
