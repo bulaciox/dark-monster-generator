@@ -38,6 +38,13 @@ const TEXT_STEPS = [
   },
 ]
 
+/** How this text step's help reads once the minimum word count is known --
+ * stated up front, since the word counter below the textarea sits where a
+ * phone's keyboard can hide it as soon as someone starts typing. */
+function textStepHelp(help: string, minWords: number): string {
+  return `${help} Please write at least ${minWords} words.`
+}
+
 function toggle(list: string[], value: string) {
   return list.includes(value) ? list.filter((v) => v !== value) : [...list, value]
 }
@@ -164,7 +171,7 @@ export function Contribute({ onFinished }: { onFinished: () => void }) {
         {TEXT_STEPS.map(
           (t, i) =>
             current === ['who', 'look', 'effect'][i] && (
-              <Step key={t.key} title={t.title} help={t.help}>
+              <Step key={t.key} title={t.title} help={textStepHelp(t.help, minWords)}>
                 <Textarea
                   autoFocus
                   value={answers[t.key]}
