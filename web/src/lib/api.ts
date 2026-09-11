@@ -30,6 +30,7 @@ export type Monster = {
   monster_type: 'human' | 'environmental'
   organ_image_url: string | null
   silhouette_image_url: string | null
+  silhouette_video_url: string | null
   story: string
   title: string
   organs: Organ[]

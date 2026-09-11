@@ -71,12 +71,18 @@ create table if not exists monsters (
     organs jsonb not null default '[]'::jsonb,
     organ_image_url text,
     silhouette_image_url text,
+    silhouette_video_url text,
     story text,
     title text,
     created_at timestamptz not null default now()
 );
 
 create index if not exists monsters_day_idx on monsters (day, number);
+
+-- Existing installs: add the column that gives the silhouette screen its
+-- occasional "breathing" animation (generated once, in the background, after
+-- a monster's four synchronous outputs are already saved).
+alter table monsters add column if not exists silhouette_video_url text;
 
 -- ---------------------------------------------------------------------------
 -- free_generations: images generated from bare prompts in the Free Generate

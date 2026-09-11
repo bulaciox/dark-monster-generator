@@ -10,6 +10,12 @@ export type ScreenKind = 'story' | 'monster' | 'organ'
 const POLL_MS = 3000
 const FADE_MS = 1200
 
+// How often the monster screen's animation triggers, picked randomly within
+// this range each cycle so the exhibition doesn't fall into an obvious,
+// mechanical rhythm.
+const ANIMATION_MIN_DELAY_MS = 20000
+const ANIMATION_MAX_DELAY_MS = 45000
+
 export function Screen({ kind }: { kind: ScreenKind }) {
   const [monster, setMonster] = useState<Monster | null>(null)
   const [visible, setVisible] = useState(true)
@@ -23,7 +29,21 @@ export function Screen({ kind }: { kind: ScreenKind }) {
         const { monster: next } = await api.stage()
         if (stopped) return
         const nextId = next?.id ?? null
-        if (nextId === currentId.current) return
+
+        if (nextId === currentId.current) {
+          // Same monster still on stage -- no fade needed, but pick up data
+          // that changed since we last displayed it. In particular, the
+          // monster screen's animation (silhouette_video_url) is generated in
+          // the background and usually isn't ready the moment the monster
+          // first appears; without this, a video that finishes mid-display
+          // would never be noticed until this monster's turn ended.
+          setMonster((prev) => {
+            if (!next || !prev) return next
+            if (prev.silhouette_video_url === next.silhouette_video_url) return prev
+            return next
+          })
+          return
+        }
 
         // Preload the image so the fade never reveals a half-loaded frame.
         const url = next ? imageFor(kind, next) : null
@@ -72,6 +92,17 @@ function Content({ kind, monster }: { kind: ScreenKind; monster: Monster }) {
     return <StoryContent monster={monster} />
   }
 
+  if (kind === 'monster') {
+    if (!monster.silhouette_image_url) {
+      return (
+        <p className="text-[clamp(0.75rem,2vw,1.5rem)] uppercase tracking-[0.4em] text-ink-700">
+          No monster image
+        </p>
+      )
+    }
+    return <MonsterContent monster={monster} />
+  }
+
   const url = imageFor(kind, monster)
   if (!url) {
     return (
@@ -86,6 +117,118 @@ function Content({ kind, monster }: { kind: ScreenKind; monster: Monster }) {
       alt={kind}
       className="h-full w-full object-contain"
     />
+  )
+}
+
+// The monster screen: the still silhouette most of the time, but every so
+// often (random interval) it comes alive with a short clip of subtle ambient
+// motion, plays forward, then plays back to its own starting frame -- which
+// is visually identical to the still image, so the swap back is seamless.
+//
+// The clip itself is generated once per monster, by the server, entirely in
+// the forward direction (see generator.generate_silhouette_video). Everything
+// about "reverse" and "when" is decided here, client-side: browsers don't
+// support smooth negative playbackRate, so reverse is faked by manually
+// stepping currentTime backwards every animation frame -- a standard trick,
+// though visibly a little less fluid than the native forward playback.
+function MonsterContent({ monster }: { monster: Monster }) {
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const [animating, setAnimating] = useState(false)
+  const rafRef = useRef<number | null>(null)
+  const timerRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    const video = videoRef.current
+    setAnimating(false)
+    video?.pause()
+    if (video) video.currentTime = 0
+
+    function clearPending() {
+      if (rafRef.current != null) cancelAnimationFrame(rafRef.current)
+      if (timerRef.current != null) window.clearTimeout(timerRef.current)
+      rafRef.current = null
+      timerRef.current = null
+    }
+
+    if (!monster.silhouette_video_url) {
+      return clearPending
+    }
+
+    function scheduleNext() {
+      const delay =
+        ANIMATION_MIN_DELAY_MS +
+        Math.random() * (ANIMATION_MAX_DELAY_MS - ANIMATION_MIN_DELAY_MS)
+      timerRef.current = window.setTimeout(playForward, delay)
+    }
+
+    function playForward() {
+      const v = videoRef.current
+      if (!v) return
+      v.currentTime = 0
+      setAnimating(true)
+      v.play().catch(() => {
+        // Autoplay blocked for some reason -- skip this cycle, try again later.
+        setAnimating(false)
+        scheduleNext()
+      })
+    }
+
+    function playReverse() {
+      const v = videoRef.current
+      if (!v) return
+      const start = performance.now()
+      const startTime = v.currentTime || v.duration || 0
+      function step(now: number) {
+        const elapsed = (now - start) / 1000
+        const t = startTime - elapsed
+        if (!videoRef.current) return
+        if (t <= 0) {
+          videoRef.current.currentTime = 0
+          setAnimating(false)
+          scheduleNext()
+          return
+        }
+        videoRef.current.currentTime = t
+        rafRef.current = requestAnimationFrame(step)
+      }
+      rafRef.current = requestAnimationFrame(step)
+    }
+
+    function onEnded() {
+      videoRef.current?.pause()
+      playReverse()
+    }
+
+    video?.addEventListener('ended', onEnded)
+    scheduleNext()
+
+    return () => {
+      video?.removeEventListener('ended', onEnded)
+      clearPending()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [monster.id, monster.silhouette_video_url])
+
+  return (
+    <div className="relative h-full w-full">
+      <img
+        src={monster.silhouette_image_url ?? undefined}
+        alt="monster"
+        className="absolute inset-0 h-full w-full object-contain transition-opacity"
+        style={{ opacity: animating ? 0 : 1, transitionDuration: `${FADE_MS / 4}ms` }}
+      />
+      {monster.silhouette_video_url && (
+        <video
+          ref={videoRef}
+          src={monster.silhouette_video_url}
+          muted
+          playsInline
+          preload="auto"
+          className="absolute inset-0 h-full w-full object-contain transition-opacity"
+          style={{ opacity: animating ? 1 : 0, transitionDuration: `${FADE_MS / 4}ms` }}
+        />
+      )}
+    </div>
   )
 }
 

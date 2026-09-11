@@ -162,6 +162,19 @@ def store_image(source_url: str) -> str:
     return _upload_to_bucket(response.content, content_type)
 
 
+def store_video(source_url: str) -> str:
+    """Copy a fal.ai temporary video into Storage and return its public URL.
+
+    Same re-hosting pattern as store_image: fal's URLs are temporary, so the
+    monster screen's animation needs its own permanent copy.
+    """
+    response = httpx.get(source_url, follow_redirects=True)
+    content_type = response.headers.get("content-type", "")
+    if not content_type.startswith("video/"):
+        content_type = "video/mp4"
+    return _upload_to_bucket(response.content, content_type)
+
+
 def next_monster_number(day: str | None = None) -> int:
     """The respondent number for the next monster, counting up through the day.
 
@@ -214,6 +227,17 @@ def get_monster(monster_id: str) -> dict | None:
     rows = _client().table(MONSTERS_TABLE).select(
         "*, submissions(data)").eq("id", monster_id).execute()
     return rows.data[0] if rows.data else None
+
+
+def save_silhouette_video(monster_id: str, video_url: str) -> None:
+    """Attach the monster screen's animation clip once it's ready.
+
+    Generated in the background after the monster's four synchronous outputs
+    are already saved and shown to the visitor, so this is a separate,
+    later update rather than part of save_monster's insert.
+    """
+    _client().table(MONSTERS_TABLE).update(
+        {"silhouette_video_url": video_url}).eq("id", monster_id).execute()
 
 
 # ---------------------------------------------------------------------------

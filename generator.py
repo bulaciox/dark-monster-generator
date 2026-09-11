@@ -14,6 +14,7 @@ from prompts.silhouette import (
     FIGURE_TEMPLATES,
     TEMPLATE as SILHOUETTE_TEMPLATE,
 )
+from prompts.silhouette_video import FALLBACK as VIDEO_FALLBACK, TEMPLATE as VIDEO_TEMPLATE
 
 load_dotenv()
 
@@ -37,6 +38,12 @@ MONSTER_MODEL = "fal-ai/flux-2-pro"
 # violence; the imagery stays metaphorical, but the default level rejects
 # anatomical language often enough to lose contributions.
 SAFETY_TOLERANCE = "5"
+
+# The monster screen's occasional animation: one short clip generated once per
+# monster from its own silhouette image. Chosen for aspect_ratio/resolution
+# control (needed to match the portrait monster monitor) and for producing
+# subtle, ambient motion rather than redesigning the figure.
+SILHOUETTE_VIDEO_MODEL = "fal-ai/ltxv-13b-098-distilled/image-to-video"
 
 # Legacy engines, kept as fallbacks (see pipeline.py).
 DEFAULT_MODEL = "fal-ai/flux/schnell"
@@ -704,6 +711,42 @@ def generate_silhouette(identity: dict) -> str:
         ], {"width": 720, "height": 1280})
         span.set_attribute("image_url", image_url)
         return image_url
+
+
+def generate_silhouette_video(image_url: str) -> str:
+    """A short clip of subtle ambient motion from the monster's own silhouette.
+
+    Generated once per monster; the monster screen plays it occasionally
+    (forward, then reverse back to the still frame) via Screen.tsx, entirely
+    client-side. This function only asks fal for the forward clip.
+
+    Args:
+        image_url: The monster's silhouette_image_url.
+
+    Returns:
+        Direct URL to the generated video.
+    """
+    arguments = {
+        "image_url": image_url,
+        "aspect_ratio": "9:16",
+        "resolution": "720p",
+    }
+    with logfire.span("generate silhouette video",
+                      model=SILHOUETTE_VIDEO_MODEL) as span:
+        for index, prompt in enumerate((VIDEO_TEMPLATE, VIDEO_FALLBACK)):
+            try:
+                result = fal_client.subscribe(
+                    SILHOUETTE_VIDEO_MODEL,
+                    arguments={**arguments, "prompt": prompt})
+                video_url = result["video"]["url"]
+                span.set_attribute("video_url", video_url)
+                return video_url
+            except Exception as exc:
+                if not _flagged(exc) or index == 1:
+                    raise
+                logfire.warn("video prompt flagged, stepping down",
+                             prompt=prompt)
+    raise RuntimeError("unreachable")  # pragma: no cover
 
 
 def free_generate(prompt: str) -> str:

@@ -139,6 +139,10 @@ class Monster(BaseModel):
     monster_type: str              # human | environmental
     organ_image_url: str | None
     silhouette_image_url: str | None
+    # Occasional "breathing" animation for the monster screen, generated in
+    # the background after the four outputs above. Null until (and unless)
+    # that background job finishes -- the screen just shows the still image.
+    silhouette_video_url: str | None
     story: str
     title: str
     organs: list[dict]
@@ -157,6 +161,7 @@ class Monster(BaseModel):
             monster_type=row.get("monster_type") or "human",
             organ_image_url=row.get("organ_image_url"),
             silhouette_image_url=row.get("silhouette_image_url"),
+            silhouette_video_url=row.get("silhouette_video_url"),
             story=row.get("story") or "",
             title=row.get("title") or "",
             organs=row.get("organs") or [],
@@ -305,8 +310,11 @@ def reset(day: str | None = None) -> dict:
 # ---------------------------------------------------------------------------
 
 # Each monster holds the stage at least this long before the next one in the
-# queue takes over. Chosen by the directors.
-DWELL_SECONDS = 60
+# queue takes over. Long enough to let a monster's background animation (see
+# pipeline._silhouette_video) actually finish and be watched at least once,
+# and -- when several visitors submit in a burst -- to hold the queue back so
+# each monster still gets its turn rather than being skipped.
+DWELL_SECONDS = 120
 
 
 class Stage(BaseModel):
@@ -377,6 +385,17 @@ if WEB_DIST.is_dir():
     # the catch-all mount, which would otherwise 404 them.
     @app.get("/screen/{name}")
     def screen_page(name: str) -> FileResponse:
+        return FileResponse(WEB_DIST / "index.html")
+
+    # The curation/admin views (Monster, Gallery, Free Generate, Data) have no
+    # nav linking to them anymore -- the public kiosk only ever shows the
+    # questionnaire -- but they still exist and are reachable by URL. Same
+    # SPA-fallback trick as /screen/{name}: App.tsx reads the path itself.
+    @app.get("/monster")
+    @app.get("/gallery")
+    @app.get("/free-generate")
+    @app.get("/data")
+    def admin_page() -> FileResponse:
         return FileResponse(WEB_DIST / "index.html")
 
     app.mount("/", StaticFiles(directory=WEB_DIST, html=True), name="web")
