@@ -251,7 +251,7 @@ function StoryContent({ monster }: { monster: Monster }) {
         className="flex w-full flex-col items-center gap-[0.5em] text-center"
         style={{ fontSize: `${fontSize}px` }}
       >
-        <p className="whitespace-nowrap text-[0.28em] uppercase tracking-[0.4em] text-ink-300">
+        <p className="whitespace-nowrap text-[0.28em] uppercase tracking-[0.4em] text-white">
           No. {monster.number}
         </p>
         {monster.title && (
