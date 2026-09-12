@@ -367,8 +367,13 @@ def _staged_monster(rows: list[dict]) -> dict | None:
 
 @app.get("/api/stage", response_model=Stage)
 def stage() -> Stage:
-    """The monster the exhibition screens should be showing right now."""
-    rows = list_monsters(day=today())          # newest-first
+    """The monster the exhibition screens should be showing right now.
+
+    Not scoped to today: the installation runs across multiple days, and the
+    screens must keep showing the last monster made rather than reset to
+    "no monster" at midnight just because none has been made yet today.
+    """
+    rows = list_monsters()                      # newest-first, every day
     staged = _staged_monster(list(reversed(rows)))  # schedule wants oldest-first
     return Stage(monster=Monster.from_row(staged) if staged else None)
 

@@ -175,15 +175,26 @@ def store_video(source_url: str) -> str:
     return _upload_to_bucket(response.content, content_type)
 
 
-def next_monster_number(day: str | None = None) -> int:
-    """The respondent number for the next monster, counting up through the day.
+def next_monster_number() -> int:
+    """The respondent number for the next monster, counting up across the
+    whole run of the installation (never resets between days).
+
+    Based on the MOST RECENTLY CREATED monster's number, not the highest
+    number that exists anywhere in the table: earlier development/testing
+    left rows scattered across older days whose numbers can be higher than
+    what's actually been shown on screen lately (a stale test day with many
+    rows can outnumber a real day with few). Continuing from whatever was
+    last actually generated is what "keeps counting up" means in practice,
+    and since created_at only moves forward, this is always monotonic for
+    real submissions regardless of what old test data sits in the table.
 
     This is the number shown beside the title on the installation screens
     (21, 33, 45, 57 in the directors' sketches).
     """
-    rows = _client().table(MONSTERS_TABLE).select(
-        "id", count="exact").eq("day", day or today()).execute()
-    return (rows.count or 0) + 1
+    rows = (_client().table(MONSTERS_TABLE).select("number")
+            .order("created_at", desc=True).limit(1).execute())
+    latest = rows.data[0]["number"] if rows.data else 0
+    return latest + 1
 
 
 def save_monster(identity: dict, organs: list[dict], story: str, title: str,
@@ -191,12 +202,16 @@ def save_monster(identity: dict, organs: list[dict], story: str, title: str,
                  silhouette_image_url: str | None,
                  submission_id: str | None = None,
                  day: str | None = None) -> dict:
-    """Record one visitor's monster: identity, organs and the four outputs."""
-    day = day or today()
+    """Record one visitor's monster: identity, organs and the four outputs.
+
+    `day` is kept only as metadata (which calendar day this monster was
+    made on, useful for admin/gallery filtering) -- it no longer affects the
+    respondent number, which counts up across the whole installation.
+    """
     row = _client().table(MONSTERS_TABLE).insert({
         "submission_id": submission_id,
-        "day": day,
-        "number": next_monster_number(day),
+        "day": day or today(),
+        "number": next_monster_number(),
         "monster_type": identity.get("monster_type", "human"),
         "identity": identity,
         "organs": organs,
