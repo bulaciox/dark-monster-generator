@@ -237,6 +237,43 @@ def list_monsters(day: str | None = None) -> list[dict]:
     return rows.data
 
 
+# Columns the exhibition screens' staging schedule actually reads (see
+# api._staged_monster / Monster.from_row). Deliberately excludes the
+# submissions(data) join used by list_monsters() -- Screen.tsx never reads
+# that field, and it was the single biggest thing bloating this query.
+_STAGE_COLUMNS = (
+    "id, created_at, day, number, monster_type, organ_image_url, "
+    "silhouette_image_url, silhouette_video_url, story, title, organs, "
+    "identity"
+)
+
+
+def list_monsters_for_stage(limit: int = 100) -> list[dict]:
+    """The most recent monsters, lightweight, for /api/stage.
+
+    /api/stage is polled every few seconds, forever, by every exhibition
+    screen -- so unlike list_monsters() (used for the admin Gallery, called
+    rarely), this must never grow with the installation's total history.
+    Two things bound it:
+
+      1. No submissions(data) join: that free-text JSON blob was, by far, the
+         largest part of each row, and the staging schedule never looks at it.
+      2. A row limit: the schedule (api._staged_monster) only ever needs a
+         recent tail to know what's on stage right now -- entries further
+         back than that get overwritten by newer ones regardless -- so 100
+         (many hours of typical submission volume) is generous headroom
+         without the query size scaling with the whole run's history.
+
+    Without both of these, this single endpoint drove Supabase egress from
+    a few KB per call to the size of the ENTIRE monsters table, on every poll,
+    which is what exhausted a month's free-tier bandwidth quota in about a
+    week (see git history around 2026-09-12 for the incident).
+    """
+    rows = (_client().table(MONSTERS_TABLE).select(_STAGE_COLUMNS)
+            .order("created_at", desc=True).limit(limit).execute())
+    return rows.data
+
+
 def get_monster(monster_id: str) -> dict | None:
     """One monster by id, with its submission embedded, or None."""
     rows = _client().table(MONSTERS_TABLE).select(

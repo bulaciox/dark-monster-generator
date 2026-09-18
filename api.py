@@ -36,6 +36,7 @@ from storage import (
     list_free_generations,
     list_generations,
     list_monsters,
+    list_monsters_for_stage,
     list_submissions,
     reset_day,
     save_free_generation,
@@ -372,8 +373,14 @@ def stage() -> Stage:
     Not scoped to today: the installation runs across multiple days, and the
     screens must keep showing the last monster made rather than reset to
     "no monster" at midnight just because none has been made yet today.
+
+    Uses the lightweight, unjoined, row-limited query -- this endpoint is
+    polled every few seconds by every screen, forever, so its cost must never
+    grow with the installation's total history (see list_monsters_for_stage's
+    docstring for why the previous, unbounded version blew through a month's
+    Supabase egress quota in about a week).
     """
-    rows = list_monsters()                      # newest-first, every day
+    rows = list_monsters_for_stage()                # newest-first
     staged = _staged_monster(list(reversed(rows)))  # schedule wants oldest-first
     return Stage(monster=Monster.from_row(staged) if staged else None)
 
