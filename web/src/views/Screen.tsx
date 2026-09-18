@@ -4,10 +4,13 @@ import { api, type Monster } from '@/lib/api'
 export type ScreenKind = 'story' | 'monster' | 'organ'
 
 // How often each screen asks the server who is on stage. The stage only
-// advances every 60s, so a few seconds of latency is invisible; polling this
-// way survives machine suspends and network blips with no long-lived
-// connection to drop.
-const POLL_MS = 3000
+// advances every DWELL_SECONDS (currently 120s server-side), so a few
+// seconds of latency is invisible; polling this way survives machine
+// suspends and network blips with no long-lived connection to drop. Kept
+// deliberately infrequent -- this endpoint is polled forever by every screen,
+// and a tighter interval was part of what exhausted Supabase's egress quota
+// (see list_monsters_for_stage's docstring in storage.py).
+const POLL_MS = 10000
 const FADE_MS = 1200
 
 // How often the monster screen's animation triggers, picked randomly within

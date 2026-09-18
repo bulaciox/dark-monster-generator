@@ -248,7 +248,7 @@ _STAGE_COLUMNS = (
 )
 
 
-def list_monsters_for_stage(limit: int = 100) -> list[dict]:
+def list_monsters_for_stage(limit: int = 10) -> list[dict]:
     """The most recent monsters, lightweight, for /api/stage.
 
     /api/stage is polled every few seconds, forever, by every exhibition
@@ -260,9 +260,12 @@ def list_monsters_for_stage(limit: int = 100) -> list[dict]:
          largest part of each row, and the staging schedule never looks at it.
       2. A row limit: the schedule (api._staged_monster) only ever needs a
          recent tail to know what's on stage right now -- entries further
-         back than that get overwritten by newer ones regardless -- so 100
-         (many hours of typical submission volume) is generous headroom
-         without the query size scaling with the whole run's history.
+         back than that get overwritten by newer ones regardless. Visitors
+         arrive one at a time in practice, never in simultaneous batches, so
+         10 is already a generous multiple of what a real burst looks like
+         (at DWELL_SECONDS=120 each, 10 queued monsters is 20 minutes of
+         backlog) without the query size scaling with the whole run's
+         history.
 
     Without both of these, this single endpoint drove Supabase egress from
     a few KB per call to the size of the ENTIRE monsters table, on every poll,
