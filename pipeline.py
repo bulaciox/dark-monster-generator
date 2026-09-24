@@ -70,6 +70,12 @@ REANCHOR_EVERY = 3
 # above, and it outlives any single request.
 _VIDEO_EXECUTOR = futures.ThreadPoolExecutor(max_workers=2)
 
+# Paused: fal.ai's queue for the video model has been unpredictable (seconds
+# to several minutes), and the new art direction hasn't been tested against
+# it yet. Flip back to True to resume -- nothing else about the feature has
+# been removed, so re-enabling it needs no other code changes.
+VIDEO_GENERATION_ENABLED = False
+
 
 def process_submission(sub: dict, theme: str | None = None) -> tuple[dict, str]:
     """Turn one visitor's answers into their monster and return (row, kind).
@@ -119,7 +125,7 @@ def _process_submission(sub: dict) -> tuple[dict, str]:
     # delay the response, and if it fails (or never finishes before the
     # monster rotates off the screen), that monster simply never animates --
     # the column stays null and the screen falls back to the still image.
-    if silhouette_url:
+    if VIDEO_GENERATION_ENABLED and silhouette_url:
         _VIDEO_EXECUTOR.submit(_silhouette_video, monster["id"], silhouette_url)
 
     return monster, ("monster" if (organ_url or silhouette_url) else "text")
