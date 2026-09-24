@@ -10,10 +10,7 @@ import logfire
 from dotenv import load_dotenv
 
 from prompts.organ import TEMPLATE as ORGAN_TEMPLATE, anatomical as _anatomical
-from prompts.silhouette import (
-    FIGURE_TEMPLATES,
-    TEMPLATE as SILHOUETTE_TEMPLATE,
-)
+from prompts.silhouette import FIGURE_TEMPLATES
 from prompts.silhouette_video import FALLBACK as VIDEO_FALLBACK, TEMPLATE as VIDEO_TEMPLATE
 
 load_dotenv()
@@ -636,11 +633,13 @@ def _generate(prompts: list[str], image_size: str | dict) -> str:
 
 
 def generate_organ(identity: dict, part: str, transformation: str) -> str:
-    """One body part, half-buried in the visitor's own setting — the organ screen.
+    """One body part as a coiling mass of skin on a dark studio table.
 
     Args:
-        identity: Output of curator.extract_identity, for the shared setting
-            ("where") that ties this screen to the silhouette's environment.
+        identity: Output of curator.extract_identity. Kept as a parameter for
+            callers, though this template no longer places any of its fields
+            (see prompts/organ.py) -- the shot is a controlled studio still
+            life, not a scene with a background.
         part: Body part from the emotion mapping, e.g. "Heart".
         transformation: How this emotion group deforms it.
 
@@ -648,22 +647,14 @@ def generate_organ(identity: dict, part: str, transformation: str) -> str:
         Direct URL to the generated image.
     """
     anatomical = _anatomical(part)
-    where = identity.get("where", "") or ""
-    where_clause = f"{where.strip()}. " if where.strip() else ""
     with logfire.span("generate organ", model=MONSTER_MODEL, part=part,
                       transformation=transformation) as span:
         image_url = _generate([
-            ORGAN_TEMPLATE.format(part=anatomical, transformation=transformation,
-                                  where=where_clause),
+            ORGAN_TEMPLATE.format(part=anatomical, transformation=transformation),
             # Without the transformation the organ says less, but it still says
             # which body part this visitor's emotions claimed.
             ORGAN_TEMPLATE.format(part=anatomical,
-                                  transformation="anatomically altered",
-                                  where=where_clause),
-            # Drop the shared setting too, in case that phrase is what's flagged.
-            ORGAN_TEMPLATE.format(part=anatomical,
-                                  transformation="anatomically altered",
-                                  where=""),
+                                  transformation="anatomically altered"),
         # 16:9 to fill the landscape 1920x1080 organ monitor edge to edge.
         ], {"width": 1280, "height": 720})
         span.set_attribute("image_url", image_url)
@@ -685,11 +676,12 @@ def generate_silhouette(identity: dict) -> str:
     """
     monster_type = identity.get("monster_type", "human")
     template = FIGURE_TEMPLATES.get(monster_type, FIGURE_TEMPLATES["human"])
-    figure = template.format(form=identity.get("who_what", "").strip())
-    bare_figure = template.format(form="")
+    form = identity.get("who_what", "").strip()
 
     # Everything the curator extracted from the free text, as one sentence of
-    # material and light. Absent for visitors who never met a monster.
+    # material and light. Absent for visitors who never met a monster. Only
+    # the "environmental" template actually places this (see
+    # prompts/silhouette.py) -- format() harmlessly ignores it otherwise.
     bits = [identity.get("object", "")] + list(identity.get("traits") or [])
     bits = [b.strip() for b in bits if b and b.strip()]
     attributes = ""
@@ -701,12 +693,12 @@ def generate_silhouette(identity: dict) -> str:
     with logfire.span("generate silhouette", model=MONSTER_MODEL,
                       monster_type=monster_type, identity=identity) as span:
         image_url = _generate([
-            SILHOUETTE_TEMPLATE.format(figure=figure, attributes=attributes),
+            template.format(form=form, attributes=attributes),
             # Drop the visitor's own material, which is where the language the
             # prompt checker reads as violent usually sits.
-            SILHOUETTE_TEMPLATE.format(figure=figure, attributes=""),
+            template.format(form=form, attributes=""),
             # Just the figure, nothing particular to this visitor.
-            SILHOUETTE_TEMPLATE.format(figure=bare_figure, attributes=""),
+            template.format(form="", attributes=""),
         # 9:16 to fill the portrait (rotated 1080x1920) monster monitor.
         ], {"width": 720, "height": 1280})
         span.set_attribute("image_url", image_url)

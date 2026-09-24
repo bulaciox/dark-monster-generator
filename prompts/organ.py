@@ -1,16 +1,28 @@
-"""Image prompt for the organ screen: one body part, found half-buried in the
-visitor's own environment -- close, tilted, weathered. See
-generator.generate_organ.
+"""Image prompt for the organ screen: one body part as a coiling, fractal
+mass of skin on a dark studio tabletop. See generator.generate_organ.
+
+Design by the second wave of artists brought in after the original mapping
+document -- replaces the earlier "half-buried in earth" version. No longer
+uses the visitor's setting ("where" from identity.py): the whole image is a
+tightly controlled studio still-life now, so there is nowhere for a
+background to go.
 """
 
 TEMPLATE = (
-    "Looking down at a steep, unsettling angle into a mound of dark broken "
-    "earth that fills almost the entire frame: {part}, {transformation}, "
-    "half-sunk in the clumped soil, its surface dusted and streaked with "
-    "earth. {where}"
-    "Analog film photograph, heavy grain, near-black palette, cold and "
-    "documentary, like a found photograph rather than a portrait. No text, "
-    "no labels, no measurement marks."
+    "A dense coiling abstract mass of human skin (#b87541) on a dark "
+    "tabletop, seen from a high three-quarter angle, filling most of the "
+    "frame. A spiral of {part}, {transformation} into a fractal vortex at "
+    "the center, each opening nested inside the last. Skin taut, wet and "
+    "glistening, ridged. "
+    "The only things in the image are the skin mass, the dark tabletop, and "
+    "a seamless black velvet backdrop (#050505) that fills the entire "
+    "background edge to edge, uniformly dark. "
+    "Lighting: cool pale backlight (#59c8f4) falling from high above and "
+    "behind the subject, grazing the far contours and tops of the coils so "
+    "the wet skin catches a cool glossy sheen where it turns away from the "
+    "camera, separating the mass from the black. Dim warm tungsten fill "
+    "from the front. "
+    "Analog film studio photograph, warm near-black palette, film grain."
 )
 
 # A few body parts from the emotion mapping read as sexual anatomy to the image
